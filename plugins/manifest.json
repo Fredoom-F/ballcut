@@ -1,0 +1,23 @@
+{
+  "name": "codex-five-layer-team-config",
+  "version": "0.1.0",
+  "description": "Five-layer Codex team configuration with memory, skills, hooks, subagents, and distribution metadata.",
+  "layers": {
+    "memory": "CLAUDE.md/",
+    "knowledge": "skills/",
+    "guardrails": "hooks/",
+    "delegation": "subagents/",
+    "distribution": "plugins/"
+  },
+  "subagents": [
+    "code-reviewer",
+    "test-runner",
+    "explorer"
+  ],
+  "hooks": {
+    "sessionStart": "hooks/SessionStart.sh",
+    "preToolUse": "hooks/PreToolUse.sh",
+    "postToolUse": "hooks/PostToolUse.sh"
+  }
+}
+

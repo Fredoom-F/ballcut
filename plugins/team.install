@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+set -eu
+
+TARGET="${1:-}"
+
+if [ -z "$TARGET" ]; then
+  echo "Usage: plugins/team.install /path/to/target-project"
+  exit 1
+fi
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+mkdir -p "$TARGET"
+
+cp -R "$ROOT/AGENTS.md" "$TARGET/"
+cp -R "$ROOT/CLAUDE.md" "$TARGET/"
+cp -R "$ROOT/skills" "$TARGET/"
+cp -R "$ROOT/hooks" "$TARGET/"
+cp -R "$ROOT/subagents" "$TARGET/"
+cp -R "$ROOT/plugins" "$TARGET/"
+
+echo "Codex five-layer team configuration installed to: $TARGET"

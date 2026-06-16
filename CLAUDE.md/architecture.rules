@@ -1,0 +1,24 @@
+# Architecture Rules
+
+## Naming
+
+- Use clear English file and folder names for code and configuration.
+- Keep generated artifacts separate from source files when possible.
+- Prefer stable names over temporary labels.
+
+## Structure
+
+- Store global conventions in `CLAUDE.md/global.md`.
+- Store repository-specific decisions in `CLAUDE.md/project.md`.
+- Store repeatable workflows in `skills/`.
+- Store automation hooks in `hooks/`.
+- Store delegated roles in `subagents/`.
+- Store packaging and team distribution files in `plugins/`.
+
+## Engineering Guardrails
+
+- Avoid broad refactors unless the task specifically calls for them.
+- Prefer existing libraries and project patterns.
+- Add comments only when they clarify non-obvious behavior.
+- Verify changes with targeted checks before calling work complete.
+

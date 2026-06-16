@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' blob:; media-src 'self' blob:; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>剪球 - 本地 AI 运动剪辑 MVP</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">本地 MVP</p>
+          <h1>剪球</h1>
+        </div>
+        <div class="privacy-pill">视频只在本机浏览器处理</div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel controls">
+          <div class="upload-box" id="dropZone">
+            <input id="videoInput" type="file" accept="video/mp4,video/webm,video/quicktime,video/*" />
+            <div class="upload-icon">⬆</div>
+            <strong>上传球类视频</strong>
+            <span>拖入文件或点击选择</span>
+          </div>
+
+          <label>
+            运动类型
+            <select id="sportSelect">
+              <option value="tennis">网球</option>
+              <option value="badminton">羽毛球</option>
+              <option value="tabletennis">乒乓球</option>
+              <option value="basketball">篮球</option>
+              <option value="football">足球</option>
+              <option value="golf">高尔夫</option>
+            </select>
+          </label>
+
+          <label>
+            剪辑目标
+            <select id="modeSelect">
+              <option value="balanced">自动综合剪辑</option>
+              <option value="cutIdle">优先删除捡球等待</option>
+              <option value="highlights">优先精彩瞬间</option>
+              <option value="effects">优先击球特效</option>
+            </select>
+          </label>
+
+          <label>
+            输出比例
+            <select id="ratioSelect">
+              <option value="source">保持原比例</option>
+              <option value="16:9">16:9 横屏</option>
+              <option value="9:16">9:16 竖屏</option>
+              <option value="1:1">1:1 方形</option>
+              <option value="4:5">4:5 社媒</option>
+            </select>
+          </label>
+
+          <label>
+            自动删除强度
+            <input id="cutStrength" type="range" min="1" max="3" value="2" />
+          </label>
+
+          <button id="analyzeBtn" class="primary" disabled>开始本地分析</button>
+          <button id="demoBtn">生成演示视频</button>
+          <button id="exportBtn" disabled>导出带水印预览</button>
+          <button id="decisionBtn" disabled>下载剪辑决策</button>
+        </aside>
+
+        <section class="mainstage">
+          <div class="player-frame">
+            <video id="sourceVideo" playsinline controls></video>
+            <canvas id="effectCanvas"></canvas>
+            <div class="watermark">剪球 AI Preview</div>
+          </div>
+
+          <div class="status-row">
+            <div>
+              <span id="fileName">等待上传视频</span>
+              <strong id="durationLabel">00:00</strong>
+            </div>
+            <label class="toggle">
+              <input id="smartSkip" type="checkbox" checked />
+              <span>播放时跳过冗余片段</span>
+            </label>
+          </div>
+
+          <div class="timeline-wrap">
+            <div id="timeline" class="timeline"></div>
+            <div class="legend">
+              <span><i class="keep"></i>保留</span>
+              <span><i class="remove"></i>捡球/等待</span>
+              <span><i class="hit"></i>击球/关键动作</span>
+              <span><i class="highlight"></i>精彩瞬间</span>
+            </div>
+          </div>
+
+          <section class="insights">
+            <article>
+              <span>原片</span>
+              <strong id="metricOriginal">--</strong>
+            </article>
+            <article>
+              <span>建议保留</span>
+              <strong id="metricKept">--</strong>
+            </article>
+            <article>
+              <span>识别事件</span>
+              <strong id="metricEvents">--</strong>
+            </article>
+            <article>
+              <span>精彩片段</span>
+              <strong id="metricHighlights">--</strong>
+            </article>
+          </section>
+        </section>
+
+        <aside class="panel event-list">
+          <div class="panel-head">
+            <h2>AI 结果</h2>
+            <button id="restoreBtn" disabled>恢复全部</button>
+          </div>
+          <div id="progressLog" class="progress-log">上传后会显示识别过程。</div>
+          <div id="eventList"></div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Local runtime output
+*.log
+*.tmp
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# User video exports and temporary media
+*.mp4
+*.mov
+*.m4v
+*.webm
+*.avi
+*.mkv
+exports/
+uploads/
+
+# Generated packages
+dist/*.zip
+
+# Unrelated local experiments
+github-star-riser/
+
+# Editor files
+.vscode/
+.idea/
