@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "python ../tests/run_all.py"
   },
   "dependencies": {},
   "devDependencies": {}

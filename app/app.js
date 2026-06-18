@@ -5,8 +5,11 @@ const state = {
   events: [],
   segments: [],
   highlights: [],
+  trajectory: [],
+  analysisQuality: null,
   restored: false,
-  raf: 0
+  raf: 0,
+  analyzing: false
 };
 
 const sportProfiles = {
@@ -52,92 +55,67 @@ function selectFile(file) {
   state.events = [];
   state.segments = [];
   state.highlights = [];
+  state.trajectory = [];
+  state.analysisQuality = null;
   renderAll();
   setLog(["视频已载入，等待读取时长。", "本地模式不会把文件发送到网络。"]);
 }
 
-function generateAnalysis() {
+async function generateAnalysis() {
+  if (!state.file || state.analyzing) return;
   const sport = $("sportSelect").value;
   const profile = sportProfiles[sport];
   const strength = Number($("cutStrength").value);
-  const mode = $("modeSelect").value;
-  const duration = state.duration;
-  const eventGap = profile.interval * (mode === "effects" ? 0.82 : 1);
-  const eventCount = clamp(Math.floor(duration / eventGap), 2, 180);
-  const startOffset = Math.min(4, duration * 0.08);
-
-  const events = Array.from({ length: eventCount }, (_, index) => {
-    const base = startOffset + index * eventGap;
-    const wave = Math.sin(index * 1.7) * Math.min(1.8, eventGap * 0.2);
-    const timestamp = clamp(base + wave, 1, duration - 1);
-    const confidence = clamp(0.66 + ((index * 17) % 31) / 100, 0.58, 0.96);
-    const score = clamp(confidence + (index % 5 === 0 ? 0.18 : 0) + (index % 9 === 0 ? 0.12 : 0), 0, 1);
-    return {
-      id: `event_${index + 1}`,
-      type: profile.event,
-      timestamp,
-      confidence,
-      score,
-      label: score > 0.86 ? "精彩瞬间" : profile.event
-    };
-  }).filter((event, index, list) => index === 0 || event.timestamp - list[index - 1].timestamp > 0.8);
-
-  const removeThreshold = strength === 1 ? 10 : strength === 2 ? 6.5 : 4;
-  const padding = mode === "highlights" ? 1.2 : mode === "cutIdle" ? 2.2 : 1.8;
-  const removed = [];
-  let lastActiveEnd = 0;
-
-  events.forEach((event) => {
-    const activeStart = clamp(event.timestamp - padding, 0, duration);
-    if (activeStart - lastActiveEnd > removeThreshold) {
-      removed.push({
-        start: lastActiveEnd,
-        end: activeStart,
-        type: "remove",
-        reason: profile.idle
-      });
-    }
-    lastActiveEnd = clamp(event.timestamp + padding + (event.score > 0.86 ? 1.8 : 0), 0, duration);
-  });
-
-  if (duration - lastActiveEnd > removeThreshold) {
-    removed.push({ start: lastActiveEnd, end: duration, type: "remove", reason: profile.idle });
-  }
-
-  const segments = [];
-  let cursor = 0;
-  removed.forEach((cut, index) => {
-    if (cut.start > cursor) {
-      segments.push({ id: `keep_${index}`, start: cursor, end: cut.start, type: "keep" });
-    }
-    segments.push({ id: `remove_${index}`, ...cut });
-    cursor = cut.end;
-  });
-  if (cursor < duration) segments.push({ id: "keep_tail", start: cursor, end: duration, type: "keep" });
-
-  const highlights = events
-    .filter((event) => event.score > (mode === "highlights" ? 0.74 : 0.82))
-    .map((event, index) => ({
-      id: `highlight_${index + 1}`,
-      start: clamp(event.timestamp - 2.5, 0, duration),
-      end: clamp(event.timestamp + 3.2, 0, duration),
-      score: event.score,
-      reason: event.score > 0.9 ? "高置信度关键动作" : "动作强度较高"
-    }));
-
-  state.events = events;
-  state.segments = segments;
-  state.highlights = highlights;
-  state.restored = false;
+  state.analyzing = true;
+  $("analyzeBtn").disabled = true;
+  $("analyzeBtn").textContent = "OpenCV 正在逐帧分析...";
   setLog([
-    `完成 ${profile.name} 本地分析。`,
-    `识别 ${events.length} 个${profile.event}点，建议删除 ${formatTime(getRemovedDuration())}。`,
-    `已生成 ${highlights.length} 个精彩片段和可预览特效。`
+    `正在分析 ${profile.name} 视频真实帧。`,
+    "检测运动区域、球色候选、连续轨迹以及方向/速度突变。",
+    "长视频可能需要数分钟，请保持本地服务窗口开启。"
   ]);
-  $("exportBtn").disabled = false;
-  $("decisionBtn").disabled = false;
-  $("restoreBtn").disabled = false;
-  renderAll();
+
+  try {
+    const response = await fetch(`/api/analyze?sport=${encodeURIComponent(sport)}&strength=${strength}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: state.file
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "本地分析失败");
+
+    state.duration = result.duration || state.duration;
+    state.events = result.events || [];
+    state.segments = result.segments || [];
+    state.highlights = result.highlights || [];
+    state.trajectory = result.trajectory || [];
+    state.analysisQuality = result.quality || null;
+    state.restored = false;
+
+    const coverage = Math.round((result.quality?.coverage || 0) * 100);
+    const messages = [
+      `完成 ${result.sportName || profile.name} OpenCV 本地分析。`,
+      `追踪到 ${state.trajectory.length} 个真实球位置，轨迹覆盖约 ${coverage}%。`,
+      `检测到 ${state.events.length} 个疑似击球，生成 ${state.highlights.length} 个候选精彩片段。`
+    ];
+    if (result.quality?.warning) messages.push(result.quality.warning);
+    setLog(messages);
+    $("exportBtn").disabled = false;
+    $("decisionBtn").disabled = false;
+    $("restoreBtn").disabled = false;
+    renderAll();
+  } catch (error) {
+    state.events = [];
+    state.segments = [{ id: "keep_0", start: 0, end: state.duration, type: "keep" }];
+    state.highlights = [];
+    state.trajectory = [];
+    setLog(["分析失败，没有生成模拟结果。", error.message]);
+    renderAll();
+  } finally {
+    state.analyzing = false;
+    $("analyzeBtn").disabled = false;
+    $("analyzeBtn").textContent = "开始本地分析";
+  }
 }
 
 function getRemovedDuration() {
@@ -204,6 +182,7 @@ function renderEvents() {
       <div>
         <strong>${event.label}</strong>
         <span>${formatTime(event.timestamp)} · 置信度 ${Math.round(event.confidence * 100)}%</span>
+        <span>${formatEvidence(event.evidence)}</span>
       </div>
       <button type="button">定位</button>
     `;
@@ -213,6 +192,11 @@ function renderEvents() {
     });
     list.appendChild(card);
   });
+}
+
+function formatEvidence(evidence) {
+  if (!evidence) return "无可用证据";
+  return `方向变化 ${evidence.directionChangeDegrees}° · 速度 ${evidence.speedBeforePxPerSec}→${evidence.speedAfterPxPerSec}px/s · 连续度 ${Math.round(evidence.trackContinuity * 100)}%`;
 }
 
 function renderMetrics() {
@@ -232,9 +216,16 @@ function renderAll() {
 
 function sizeCanvasToVideo() {
   const rect = video.getBoundingClientRect();
+  const parentRect = video.parentElement.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
   const width = Math.max(1, Math.floor(rect.width * ratio));
   const height = Math.max(1, Math.floor(rect.height * ratio));
+  canvas.style.left = `${rect.left - parentRect.left}px`;
+  canvas.style.top = `${rect.top - parentRect.top}px`;
+  canvas.style.width = `${rect.width}px`;
+  canvas.style.height = `${rect.height}px`;
+  canvas.style.right = "auto";
+  canvas.style.bottom = "auto";
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
@@ -251,12 +242,12 @@ function drawEffects() {
 
   const profile = sportProfiles[$("sportSelect").value];
   const now = video.currentTime;
-  const recent = state.events.filter((event) => Math.abs(event.timestamp - now) < 0.65);
+  const recent = state.events.filter((event) => Math.abs(event.timestamp - now) < 0.65 && event.position);
   recent.forEach((event) => {
     const age = Math.abs(event.timestamp - now);
     const pulse = 1 - age / 0.65;
-    const x = canvas.width * (0.5 + 0.28 * Math.sin(event.timestamp * 1.9));
-    const y = canvas.height * (0.48 + 0.22 * Math.cos(event.timestamp * 1.3));
+    const x = canvas.width * event.position.x;
+    const y = canvas.height * event.position.y;
     ctx.save();
     ctx.globalAlpha = pulse;
     ctx.strokeStyle = profile.color;
@@ -271,12 +262,27 @@ function drawEffects() {
     ctx.restore();
   });
 
-  const trail = state.events.filter((event) => event.timestamp < now && now - event.timestamp < 2.2).slice(-6);
-  trail.forEach((event, index) => {
-    const x = canvas.width * (0.5 + 0.28 * Math.sin(event.timestamp * 1.9));
-    const y = canvas.height * (0.48 + 0.22 * Math.cos(event.timestamp * 1.3));
+  const trail = state.trajectory.filter((point) => point.time <= now && now - point.time < 1.2).slice(-18);
+  if (trail.length > 1) {
     ctx.save();
-    ctx.globalAlpha = (index + 1) / 8;
+    ctx.strokeStyle = profile.color;
+    ctx.lineWidth = 4;
+    ctx.globalAlpha = 0.72;
+    ctx.beginPath();
+    trail.forEach((point, index) => {
+      const x = canvas.width * point.xNorm;
+      const y = canvas.height * point.yNorm;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+  trail.forEach((point, index) => {
+    const x = canvas.width * point.xNorm;
+    const y = canvas.height * point.yNorm;
+    ctx.save();
+    ctx.globalAlpha = (index + 1) / Math.max(2, trail.length + 2);
     ctx.fillStyle = profile.color;
     ctx.beginPath();
     ctx.arc(x, y, 4 + index, 0, Math.PI * 2);
@@ -305,6 +311,9 @@ function makeDecisionPayload() {
     events: state.events,
     segments: state.segments,
     highlights: state.highlights
+    ,
+    trajectory: state.trajectory,
+    analysis_quality: state.analysisQuality
   };
 }
 
@@ -507,8 +516,9 @@ function drawExportSegment(exportVideo, outCtx, out, end) {
         .filter((event) => Math.abs(event.timestamp - exportVideo.currentTime) < 0.6)
         .forEach((event) => {
           const pulse = 1 - Math.abs(event.timestamp - exportVideo.currentTime) / 0.6;
-          const ex = out.width * (0.5 + 0.28 * Math.sin(event.timestamp * 1.9));
-          const ey = out.height * (0.48 + 0.22 * Math.cos(event.timestamp * 1.3));
+          if (!event.position) return;
+          const ex = out.width * event.position.x;
+          const ey = out.height * event.position.y;
           outCtx.save();
           outCtx.globalAlpha = pulse;
           outCtx.strokeStyle = profile.color;
