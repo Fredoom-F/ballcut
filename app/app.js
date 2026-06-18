@@ -9,7 +9,14 @@ const state = {
   analysisQuality: null,
   restored: false,
   raf: 0,
-  analyzing: false
+  analyzing: false,
+  analysisJobId: null,
+  analysisRequest: null,
+  analysisPollTimer: 0,
+  ballColor: null,
+  calibrationMode: false,
+  currentCacheKey: null,
+  persistTimer: 0
 };
 
 const sportProfiles = {
@@ -25,6 +32,9 @@ const $ = (id) => document.getElementById(id);
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
+const analysisDbName = "jianqiu-local-analysis";
+const analysisStoreName = "results";
+const projectStoreName = "projects";
 
 function formatTime(seconds) {
   const safe = Math.max(0, Number(seconds) || 0);
@@ -41,6 +51,264 @@ function setLog(lines) {
   $("progressLog").innerHTML = lines.map((line) => `<div>${line}</div>`).join("");
 }
 
+function formatRemaining(seconds) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "正在估算剩余时间";
+  if (seconds < 10) return "预计不到 10 秒";
+  if (seconds < 60) return `预计剩余 ${Math.ceil(seconds)} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.ceil(seconds % 60);
+  return `预计剩余 ${minutes} 分 ${remainder} 秒`;
+}
+
+function formatBytesPerSecond(bytesPerSecond) {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
+}
+
+function showAnalysisProgress({ phase, percent, eta, speed }) {
+  $("analysisProgress").hidden = false;
+  $("analysisPhase").textContent = phase;
+  $("analysisPercent").textContent = `${Math.round(clamp(percent, 0, 1) * 100)}%`;
+  $("analysisProgressBar").style.width = `${clamp(percent, 0, 1) * 100}%`;
+  $("analysisEta").textContent = eta;
+  $("analysisSpeed").textContent = speed || "";
+}
+
+function hideAnalysisProgress() {
+  $("analysisProgress").hidden = true;
+  $("analysisProgressBar").style.width = "0%";
+}
+
+function openAnalysisDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(analysisDbName, 2);
+    request.addEventListener("upgradeneeded", () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(analysisStoreName)) {
+        db.createObjectStore(analysisStoreName, { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains(projectStoreName)) {
+        db.createObjectStore(projectStoreName, { keyPath: "key" });
+      }
+    });
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error));
+  });
+}
+
+function getAnalysisCacheKey(file, sport, strength, sensitivity) {
+  return [
+    "v4",
+    file.name,
+    file.size,
+    file.lastModified,
+    sport,
+    strength,
+    sensitivity,
+    state.ballColor ? state.ballColor.join(",") : "default"
+  ].join(":");
+}
+
+function updateBallColorUi() {
+  const swatch = $("ballColorSwatch");
+  if (!state.ballColor) {
+    swatch.hidden = true;
+    $("resetBallColorBtn").disabled = true;
+    $("ballColorStatus").textContent = state.calibrationMode
+      ? "请点击视频画面中清晰可见的球"
+      : "使用运动默认球色";
+    return;
+  }
+  const [red, green, blue] = state.ballColor;
+  swatch.hidden = false;
+  swatch.style.background = `rgb(${red}, ${green}, ${blue})`;
+  $("resetBallColorBtn").disabled = false;
+  $("ballColorStatus").textContent = `已校准 RGB(${red}, ${green}, ${blue})`;
+}
+
+function startBallColorCalibration() {
+  if (!state.file) return;
+  state.calibrationMode = true;
+  video.pause();
+  document.querySelector(".player-frame").classList.add("calibrating");
+  updateBallColorUi();
+}
+
+function resetBallColor() {
+  state.ballColor = null;
+  state.calibrationMode = false;
+  document.querySelector(".player-frame").classList.remove("calibrating");
+  updateBallColorUi();
+}
+
+function sampleBallColor(event) {
+  if (!state.calibrationMode || !video.videoWidth || !video.videoHeight) return;
+  const rect = video.getBoundingClientRect();
+  if (
+    event.clientX < rect.left ||
+    event.clientX > rect.right ||
+    event.clientY < rect.top ||
+    event.clientY > rect.bottom
+  ) return;
+  const sourceX = Math.floor(((event.clientX - rect.left) / rect.width) * video.videoWidth);
+  const sourceY = Math.floor(((event.clientY - rect.top) / rect.height) * video.videoHeight);
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = 5;
+  sampleCanvas.height = 5;
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  sampleContext.drawImage(video, sourceX - 2, sourceY - 2, 5, 5, 0, 0, 5, 5);
+  const pixels = sampleContext.getImageData(0, 0, 5, 5).data;
+  const channels = [[], [], []];
+  for (let index = 0; index < pixels.length; index += 4) {
+    channels[0].push(pixels[index]);
+    channels[1].push(pixels[index + 1]);
+    channels[2].push(pixels[index + 2]);
+  }
+  state.ballColor = channels.map((values) => {
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  });
+  state.calibrationMode = false;
+  document.querySelector(".player-frame").classList.remove("calibrating");
+  updateBallColorUi();
+  setLog([
+    "球颜色已校准。",
+    "下一次分析会使用该颜色生成视频专用检测范围；点击“重置”可恢复运动默认值。"
+  ]);
+}
+
+async function readAnalysisCache(key) {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(analysisStoreName, "readonly");
+    const request = transaction.objectStore(analysisStoreName).get(key);
+    request.addEventListener("success", () => resolve(request.result?.result || null));
+    request.addEventListener("error", () => reject(request.error));
+    transaction.addEventListener("complete", () => db.close());
+  });
+}
+
+async function writeAnalysisCache(key, result) {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(analysisStoreName, "readwrite");
+    transaction.objectStore(analysisStoreName).put({
+      key,
+      result,
+      savedAt: Date.now()
+    });
+    transaction.addEventListener("complete", () => {
+      db.close();
+      resolve();
+    });
+    transaction.addEventListener("error", () => {
+      db.close();
+      reject(transaction.error);
+    });
+  });
+}
+
+async function readProjectEdits(key) {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(projectStoreName, "readonly");
+    const request = transaction.objectStore(projectStoreName).get(key);
+    request.addEventListener("success", () => resolve(request.result?.edits || null));
+    request.addEventListener("error", () => reject(request.error));
+    transaction.addEventListener("complete", () => db.close());
+  });
+}
+
+async function writeProjectEdits(key, edits) {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(projectStoreName, "readwrite");
+    transaction.objectStore(projectStoreName).put({
+      key,
+      edits,
+      savedAt: Date.now()
+    });
+    transaction.addEventListener("complete", () => {
+      db.close();
+      resolve();
+    });
+    transaction.addEventListener("error", () => {
+      db.close();
+      reject(transaction.error);
+    });
+  });
+}
+
+function snapshotProjectEdits() {
+  return {
+    events: state.events.map((event) => ({
+      ...event
+    })),
+    segments: state.segments.map((segment) => ({
+      id: segment.id,
+      restored: Boolean(segment.restored)
+    })),
+    restored: state.restored
+  };
+}
+
+function applyProjectEdits(edits) {
+  if (!edits) return;
+  const originalIds = new Set(state.events.map((event) => event.id));
+  const savedById = new Map((edits.events || []).map((event) => [event.id, event]));
+  state.events = state.events.map((event) => {
+    const saved = savedById.get(event.id);
+    return saved ? { ...event, ...saved } : event;
+  });
+  (edits.events || [])
+    .filter((event) => !originalIds.has(event.id) && event.source === "manual")
+    .forEach((event) => state.events.push(event));
+  const segmentEdits = new Map((edits.segments || []).map((segment) => [segment.id, segment]));
+  state.segments = state.segments.map((segment) => ({
+    ...segment,
+    restored: Boolean(segmentEdits.get(segment.id)?.restored)
+  }));
+  state.restored = Boolean(edits.restored);
+  $("restoreBtn").textContent = state.restored ? "重新删除" : "恢复全部";
+  state.events.sort((a, b) => a.timestamp - b.timestamp);
+  rebuildHighlights();
+}
+
+function scheduleProjectPersist() {
+  if (!state.currentCacheKey || !state.analysisQuality) return;
+  clearTimeout(state.persistTimer);
+  state.persistTimer = setTimeout(() => {
+    writeProjectEdits(state.currentCacheKey, snapshotProjectEdits()).catch(() => {});
+  }, 250);
+}
+
+function applyAnalysisResult(result) {
+  state.duration = result.duration || state.duration;
+  state.events = (result.events || []).map((event) => ({
+    ...event,
+    reviewStatus: "unreviewed",
+    source: "opencv",
+    favorite: false
+  }));
+  state.segments = (result.segments || []).map((segment) => ({
+    ...segment,
+    restored: false
+  }));
+  state.highlights = result.highlights || [];
+  state.trajectory = result.trajectory || [];
+  state.analysisQuality = result.quality || null;
+  state.restored = false;
+  rebuildHighlights();
+  $("exportBtn").disabled = false;
+  $("decisionBtn").disabled = false;
+  $("restoreBtn").disabled = false;
+  $("addHitBtn").disabled = false;
+  $("previousEventBtn").disabled = false;
+  $("nextEventBtn").disabled = false;
+  renderAll();
+}
+
 function selectFile(file) {
   if (!file || !file.type.startsWith("video/")) return;
   if (state.url) URL.revokeObjectURL(state.url);
@@ -52,11 +320,22 @@ function selectFile(file) {
   $("exportBtn").disabled = true;
   $("decisionBtn").disabled = true;
   $("restoreBtn").disabled = true;
+  $("addHitBtn").disabled = true;
+  $("previousEventBtn").disabled = true;
+  $("nextEventBtn").disabled = true;
+  $("calibrateBallBtn").disabled = false;
   state.events = [];
   state.segments = [];
   state.highlights = [];
   state.trajectory = [];
   state.analysisQuality = null;
+  state.ballColor = null;
+  state.calibrationMode = false;
+  state.currentCacheKey = null;
+  $("restoreBtn").textContent = "恢复全部";
+  document.querySelector(".player-frame").classList.remove("calibrating");
+  updateBallColorUi();
+  $("trainingReport").hidden = true;
   renderAll();
   setLog(["视频已载入，等待读取时长。", "本地模式不会把文件发送到网络。"]);
 }
@@ -66,9 +345,19 @@ async function generateAnalysis() {
   const sport = $("sportSelect").value;
   const profile = sportProfiles[sport];
   const strength = Number($("cutStrength").value);
+  const sensitivity = Number($("hitSensitivity").value);
+  const cacheKey = getAnalysisCacheKey(state.file, sport, strength, sensitivity);
+  state.currentCacheKey = cacheKey;
   state.analyzing = true;
+  state.analysisJobId = null;
   $("analyzeBtn").disabled = true;
   $("analyzeBtn").textContent = "OpenCV 正在逐帧分析...";
+  showAnalysisProgress({
+    phase: "正在上传到本机分析器",
+    percent: 0,
+    eta: "正在估算剩余时间",
+    speed: ""
+  });
   setLog([
     `正在分析 ${profile.name} 视频真实帧。`,
     "检测运动区域、球色候选、连续轨迹以及方向/速度突变。",
@@ -76,21 +365,28 @@ async function generateAnalysis() {
   ]);
 
   try {
-    const response = await fetch(`/api/analyze?sport=${encodeURIComponent(sport)}&strength=${strength}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: state.file
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "本地分析失败");
+    if ($("reuseCache").checked) {
+      const cached = await readAnalysisCache(cacheKey).catch(() => null);
+      if (cached) {
+        applyAnalysisResult(cached);
+        const edits = await readProjectEdits(cacheKey).catch(() => null);
+        applyProjectEdits(edits);
+        renderAll();
+        setLog([
+          `已从本机缓存恢复 ${profile.name} 分析结果。`,
+          `轨迹 ${state.trajectory.length} 点，疑似击球 ${state.events.length} 个。`,
+          "原视频未被复制或上传；需要重新计算时关闭“复用本机分析缓存”。"
+        ]);
+        return;
+      }
+    }
 
-    state.duration = result.duration || state.duration;
-    state.events = result.events || [];
-    state.segments = result.segments || [];
-    state.highlights = result.highlights || [];
-    state.trajectory = result.trajectory || [];
-    state.analysisQuality = result.quality || null;
-    state.restored = false;
+    const job = await uploadAnalysisJob(state.file, sport, strength, sensitivity, state.ballColor);
+    state.analysisJobId = job.id;
+    const result = await waitForAnalysisResult(job.id);
+    applyAnalysisResult(result);
+    await writeAnalysisCache(cacheKey, result).catch(() => {});
+    await writeProjectEdits(cacheKey, snapshotProjectEdits()).catch(() => {});
 
     const coverage = Math.round((result.quality?.coverage || 0) * 100);
     const messages = [
@@ -100,32 +396,284 @@ async function generateAnalysis() {
     ];
     if (result.quality?.warning) messages.push(result.quality.warning);
     setLog(messages);
-    $("exportBtn").disabled = false;
-    $("decisionBtn").disabled = false;
-    $("restoreBtn").disabled = false;
-    renderAll();
   } catch (error) {
     state.events = [];
     state.segments = [{ id: "keep_0", start: 0, end: state.duration, type: "keep" }];
     state.highlights = [];
     state.trajectory = [];
-    setLog(["分析失败，没有生成模拟结果。", error.message]);
+    const cancelled = error.name === "AbortError" || error.message === "用户已取消分析";
+    setLog(cancelled ? ["分析已取消，临时视频正在清理。"] : ["分析失败，没有生成模拟结果。", error.message]);
     renderAll();
   } finally {
+    clearTimeout(state.analysisPollTimer);
+    state.analysisPollTimer = 0;
+    state.analysisRequest = null;
+    state.analysisJobId = null;
     state.analyzing = false;
     $("analyzeBtn").disabled = false;
     $("analyzeBtn").textContent = "开始本地分析";
+    hideAnalysisProgress();
+  }
+}
+
+function uploadAnalysisJob(file, sport, strength, sensitivity, ballColor) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    state.analysisRequest = xhr;
+    const startedAt = performance.now();
+    let lastLoaded = 0;
+    let lastAt = startedAt;
+    let smoothedSpeed = 0;
+
+    const ballQuery = ballColor ? `&ball=${encodeURIComponent(ballColor.join(","))}` : "";
+    xhr.open(
+      "POST",
+      `/api/analyze/start?sport=${encodeURIComponent(sport)}&strength=${strength}&sensitivity=${sensitivity}${ballQuery}`
+    );
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.addEventListener("progress", (event) => {
+      const now = performance.now();
+      const elapsed = Math.max(0.001, (now - lastAt) / 1000);
+      const currentSpeed = (event.loaded - lastLoaded) / elapsed;
+      smoothedSpeed = smoothedSpeed ? smoothedSpeed * 0.72 + currentSpeed * 0.28 : currentSpeed;
+      const total = event.lengthComputable ? event.total : file.size;
+      const uploadProgress = total ? event.loaded / total : 0;
+      const eta = smoothedSpeed > 0 ? (total - event.loaded) / smoothedSpeed : null;
+      showAnalysisProgress({
+        phase: "正在传入本机分析器",
+        percent: uploadProgress * 0.12,
+        eta: formatRemaining(eta),
+        speed: formatBytesPerSecond(smoothedSpeed)
+      });
+      lastLoaded = event.loaded;
+      lastAt = now;
+    });
+    xhr.addEventListener("load", () => {
+      try {
+        const payload = JSON.parse(xhr.responseText);
+        if (xhr.status !== 202) throw new Error(payload.error || "无法创建分析任务");
+        resolve(payload);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("无法连接本地分析服务")));
+    xhr.addEventListener("abort", () => reject(new DOMException("用户已取消分析", "AbortError")));
+    xhr.send(file);
+  });
+}
+
+async function waitForAnalysisResult(jobId) {
+  while (state.analyzing && state.analysisJobId === jobId) {
+    const response = await fetch(`/api/analyze/status?id=${encodeURIComponent(jobId)}`, {
+      cache: "no-store"
+    });
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.error || "无法读取分析进度");
+
+    const analysisProgress = clamp(Number(job.progress) || 0, 0, 1);
+    const overallProgress = 0.12 + analysisProgress * 0.88;
+    const processed = formatTime(job.processedSeconds || 0);
+    const total = job.totalSeconds ? formatTime(job.totalSeconds) : "--:--";
+    const phase = job.phase === "finalizing"
+      ? "正在生成轨迹与剪辑建议"
+      : `OpenCV 逐帧分析 ${processed} / ${total}`;
+    showAnalysisProgress({
+      phase,
+      percent: overallProgress,
+      eta: formatRemaining(job.etaSeconds),
+      speed: job.processingFps ? `${job.processingFps.toFixed(1)} 帧/s` : ""
+    });
+
+    if (job.status === "completed") {
+      const resultResponse = await fetch(`/api/analyze/result?id=${encodeURIComponent(jobId)}`, {
+        cache: "no-store"
+      });
+      const result = await resultResponse.json();
+      if (!resultResponse.ok) throw new Error(result.error || "无法读取分析结果");
+      return result;
+    }
+    if (job.status === "failed" || job.status === "cancelled") {
+      throw new Error(job.error || (job.status === "cancelled" ? "用户已取消分析" : "本地分析失败"));
+    }
+    await new Promise((resolve) => {
+      state.analysisPollTimer = setTimeout(resolve, 700);
+    });
+  }
+  throw new DOMException("用户已取消分析", "AbortError");
+}
+
+async function cancelAnalysis() {
+  if (!state.analyzing) return;
+  state.analyzing = false;
+  if (state.analysisRequest && state.analysisRequest.readyState !== XMLHttpRequest.DONE) {
+    state.analysisRequest.abort();
+    return;
+  }
+  if (state.analysisJobId) {
+    try {
+      await fetch(`/api/analyze/cancel?id=${encodeURIComponent(state.analysisJobId)}`, {
+        method: "DELETE"
+      });
+    } catch {
+      // The local process may already have exited.
+    }
   }
 }
 
 function getRemovedDuration() {
   if (state.restored) return 0;
-  return state.segments.filter((s) => s.type === "remove").reduce((sum, s) => sum + s.end - s.start, 0);
+  return state.segments
+    .filter((segment) => segment.type === "remove" && !segment.restored)
+    .reduce((sum, segment) => sum + segment.end - segment.start, 0);
 }
 
 function getKeptSegments() {
   if (state.restored) return [{ start: 0, end: state.duration, type: "keep" }];
-  return state.segments.filter((segment) => segment.type === "keep" && segment.end > segment.start);
+  return state.segments
+    .filter((segment) => (segment.type === "keep" || segment.restored) && segment.end > segment.start);
+}
+
+function getActiveEvents() {
+  return state.events.filter((event) => event.reviewStatus !== "ignored");
+}
+
+function rebuildHighlights() {
+  const activeEvents = getActiveEvents().slice().sort((a, b) => a.timestamp - b.timestamp);
+  state.highlights = activeEvents
+    .filter((event) => event.reviewStatus === "confirmed" || event.source === "manual" || event.confidence >= 0.58)
+    .map((event, index) => ({
+      id: `highlight_reviewed_${index + 1}`,
+      start: clamp(event.timestamp - 2.2, 0, state.duration),
+      end: clamp(event.timestamp + 3, 0, state.duration),
+      score: getHighlightScore(event, activeEvents),
+      reason: getHighlightReason(event, activeEvents),
+      eventId: event.id,
+      favorite: Boolean(event.favorite)
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((highlight, rank) => ({ ...highlight, rank: rank + 1 }));
+}
+
+function getHighlightScore(event, events) {
+  if (event.favorite) return 1;
+  const evidence = event.evidence || {};
+  const speedScore = clamp((evidence.speedAfterPxPerSec || 0) / 650, 0, 1);
+  const directionScore = clamp((evidence.directionChangeDegrees || 0) / 180, 0, 1);
+  const continuityScore = evidence.trackContinuity || 0;
+  const nearbyHits = events.filter((candidate) =>
+    candidate.id !== event.id && Math.abs(candidate.timestamp - event.timestamp) <= 8
+  ).length;
+  const sequenceScore = clamp(nearbyHits / 3, 0, 1);
+  const reviewedBonus = event.reviewStatus === "confirmed" || event.source === "manual" ? 0.12 : 0;
+  return clamp(
+    event.confidence * 0.38 +
+    speedScore * 0.22 +
+    directionScore * 0.16 +
+    continuityScore * 0.12 +
+    sequenceScore * 0.12 +
+    reviewedBonus,
+    0,
+    1
+  );
+}
+
+function getHighlightReason(event, events) {
+  if (event.favorite) return "用户收藏";
+  if (event.source === "manual") return "用户手动添加";
+  const evidence = event.evidence || {};
+  const nearbyHits = events.filter((candidate) =>
+    candidate.id !== event.id && Math.abs(candidate.timestamp - event.timestamp) <= 8
+  ).length;
+  if ((evidence.speedAfterPxPerSec || 0) >= 500) return "高画面球速";
+  if (nearbyHits >= 2) return "连续击球片段";
+  if (event.reviewStatus === "confirmed") return "用户确认击球";
+  return "球轨迹明显变化";
+}
+
+function buildTrainingSummary() {
+  const events = getActiveEvents().slice().sort((a, b) => a.timestamp - b.timestamp);
+  const intervals = events.slice(1).map((event, index) => event.timestamp - events[index].timestamp);
+  const averageInterval = intervals.length
+    ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length
+    : null;
+  let longestSequence = events.length ? 1 : 0;
+  let currentSequence = events.length ? 1 : 0;
+  intervals.forEach((interval) => {
+    if (interval <= 8) {
+      currentSequence += 1;
+      longestSequence = Math.max(longestSequence, currentSequence);
+    } else {
+      currentSequence = 1;
+    }
+  });
+  const fastestSpeed = events.reduce(
+    (maximum, event) => Math.max(maximum, event.evidence?.speedAfterPxPerSec || 0),
+    0
+  );
+  const reviewed = state.events.filter((event) =>
+    event.reviewStatus === "confirmed" || event.reviewStatus === "ignored" || event.source === "manual"
+  ).length;
+  const reviewRate = state.events.length ? reviewed / state.events.length : 0;
+  const keptRatio = state.duration ? (state.duration - getRemovedDuration()) / state.duration : 0;
+  const coverage = state.analysisQuality?.coverage || 0;
+  const averageConfidence = events.length
+    ? events.reduce((sum, event) => sum + event.confidence, 0) / events.length
+    : 0;
+  const trustScore = clamp(coverage * 0.45 + averageConfidence * 0.4 + Math.min(1, events.length / 6) * 0.15, 0, 1);
+  const trustLabel = trustScore >= 0.72 ? "较高" : trustScore >= 0.45 ? "中等" : "需复核";
+
+  return {
+    sport: $("sportSelect").value,
+    duration: state.duration,
+    activeEvents: events.length,
+    averageInterval,
+    longestSequence,
+    fastestSpeed,
+    keptRatio,
+    reviewRate,
+    trustScore,
+    trustLabel,
+    trajectoryCoverage: coverage,
+    cameraStability: state.analysisQuality?.cameraStability || 0,
+    medianSharpness: state.analysisQuality?.medianSharpness || 0,
+    medianBrightness: state.analysisQuality?.medianBrightness || 0,
+    recommendations: state.analysisQuality?.recommendations || [],
+    removedDuration: getRemovedDuration(),
+    generatedAt: new Date().toISOString()
+  };
+}
+
+function renderTrainingReport() {
+  const report = $("trainingReport");
+  if (!state.analysisQuality) {
+    report.hidden = true;
+    return;
+  }
+  const summary = buildTrainingSummary();
+  report.hidden = false;
+  $("trainingReportTitle").textContent = `${sportProfiles[$("sportSelect").value].name}训练摘要`;
+  const values = [
+    ["有效运动", `${Math.round(summary.keptRatio * 100)}%`],
+    ["有效击球", String(summary.activeEvents)],
+    ["平均间隔", summary.averageInterval == null ? "--" : `${summary.averageInterval.toFixed(1)} 秒`],
+    ["最长连续", `${summary.longestSequence} 次`],
+    ["最快画面球速", summary.fastestSpeed ? `${Math.round(summary.fastestSpeed)} px/s` : "--"],
+    ["识别可信度", summary.trustLabel],
+    ["机位稳定", `${Math.round(summary.cameraStability * 100)}%`]
+  ];
+  $("trainingReportMetrics").innerHTML = values
+    .map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`)
+    .join("");
+  const recommendations = summary.recommendations.length
+    ? ` 拍摄建议：${summary.recommendations.join("；")}。`
+    : "";
+  $("trainingReportNote").textContent =
+    `轨迹覆盖 ${Math.round(summary.trajectoryCoverage * 100)}%，已审阅 ${Math.round(summary.reviewRate * 100)}%。` +
+    (summary.trustLabel === "需复核"
+      ? " 建议逐项确认候选击球后再导出精彩集锦。"
+      : " 可继续确认或忽略候选，报告会实时更新。") +
+    recommendations;
 }
 
 function renderTimeline() {
@@ -137,7 +685,7 @@ function renderTimeline() {
   state.segments.forEach((segment) => {
     const div = document.createElement("button");
     div.type = "button";
-    div.className = `segment ${state.restored && segment.type === "remove" ? "keep" : segment.type}`;
+    div.className = `segment ${(state.restored || segment.restored) && segment.type === "remove" ? "keep" : segment.type}`;
     div.style.left = `${(segment.start / state.duration) * 100}%`;
     div.style.width = `${Math.max(0.35, ((segment.end - segment.start) / state.duration) * 100)}%`;
     div.title = `${segment.type === "remove" ? segment.reason : "保留片段"} ${formatTime(segment.start)}-${formatTime(segment.end)}`;
@@ -152,7 +700,7 @@ function renderTimeline() {
     fragment.appendChild(div);
   });
 
-  state.events.forEach((event) => {
+  getActiveEvents().forEach((event) => {
     const marker = document.createElement("div");
     marker.className = "event-marker";
     marker.style.left = `${(event.timestamp / state.duration) * 100}%`;
@@ -174,26 +722,180 @@ function renderEvents() {
   list.innerHTML = "";
   if (!state.events.length) {
     list.innerHTML = '<div class="event-card"><span>暂无识别结果。</span></div>';
+    renderCuts();
     return;
   }
 
-  state.events.slice(0, 24).forEach((event) => {
+  state.events.slice(0, 80).forEach((event) => {
     const card = document.createElement("div");
-    card.className = "event-card";
+    card.className = `event-card ${event.reviewStatus || ""}`;
+    const statusText = event.reviewStatus === "confirmed"
+      ? "已确认"
+      : event.reviewStatus === "ignored"
+        ? "已忽略"
+        : event.source === "manual"
+          ? "手动添加"
+          : "待确认";
     card.innerHTML = `
       <div>
         <strong>${event.label}</strong>
         <span>${formatTime(event.timestamp)} · 置信度 ${Math.round(event.confidence * 100)}%</span>
         <span>${formatEvidence(event.evidence)}</span>
+        <span>精彩分 ${Math.round(getHighlightScore(event, getActiveEvents()) * 100)}</span>
+        <span class="event-status">${statusText}</span>
       </div>
-      <button type="button">定位</button>
+      <div class="event-actions">
+        <button type="button" data-action="locate">定位</button>
+        <button type="button" data-action="confirm">${event.reviewStatus === "confirmed" ? "取消确认" : "确认"}</button>
+        <button type="button" data-action="ignore">${event.reviewStatus === "ignored" ? "恢复" : "忽略"}</button>
+        <button type="button" data-action="favorite">${event.favorite ? "取消收藏" : "收藏"}</button>
+      </div>
     `;
-    card.querySelector("button").addEventListener("click", () => {
-      video.currentTime = event.timestamp;
-      video.play();
+    card.querySelector(".event-actions").addEventListener("click", (clickEvent) => {
+      const action = clickEvent.target.dataset.action;
+      if (!action) return;
+      if (action === "locate") {
+        video.currentTime = event.timestamp;
+        video.play();
+        return;
+      }
+      if (action === "confirm") {
+        event.reviewStatus = event.reviewStatus === "confirmed" ? "unreviewed" : "confirmed";
+      }
+      if (action === "ignore") {
+        event.reviewStatus = event.reviewStatus === "ignored" ? "unreviewed" : "ignored";
+      }
+      if (action === "favorite") {
+        event.favorite = !event.favorite;
+        if (event.favorite && event.reviewStatus === "ignored") event.reviewStatus = "unreviewed";
+      }
+      rebuildHighlights();
+      scheduleProjectPersist();
+      renderAll();
     });
     list.appendChild(card);
   });
+  renderCuts();
+}
+
+function renderCuts() {
+  const list = $("cutList");
+  list.innerHTML = "";
+  const cuts = state.segments.filter((segment) => segment.type === "remove");
+  if (!cuts.length) return;
+
+  const heading = document.createElement("div");
+  heading.className = "result-section-title";
+  heading.textContent = `等待/冗余建议 ${cuts.length} 段`;
+  list.appendChild(heading);
+
+  cuts.forEach((segment) => {
+    const card = document.createElement("div");
+    card.className = `cut-card ${segment.restored ? "restored" : ""}`;
+    card.innerHTML = `
+      <div>
+        <strong>${segment.restored ? "已恢复" : "建议删除"}</strong>
+        <span>${formatTime(segment.start)}–${formatTime(segment.end)} · ${segment.reason}</span>
+      </div>
+      <button type="button">${segment.restored ? "重新删除" : "恢复"}</button>
+    `;
+    card.querySelector("button").addEventListener("click", () => {
+      segment.restored = !segment.restored;
+      scheduleProjectPersist();
+      renderAll();
+    });
+    list.appendChild(card);
+  });
+}
+
+function addHitAtCurrentTime() {
+  if (!state.duration) return;
+  const timestamp = video.currentTime;
+  const nearestPoint = state.trajectory.reduce((best, point) => {
+    if (!best || Math.abs(point.time - timestamp) < Math.abs(best.time - timestamp)) return point;
+    return best;
+  }, null);
+  const hasNearbyPoint = nearestPoint && Math.abs(nearestPoint.time - timestamp) <= 0.8;
+  state.events.push({
+    id: `manual_${Date.now()}`,
+    type: "hit",
+    label: "手动击球",
+    timestamp: Number(timestamp.toFixed(3)),
+    confidence: 1,
+    score: 1,
+    position: hasNearbyPoint
+      ? { x: nearestPoint.xNorm, y: nearestPoint.yNorm }
+      : { x: 0.5, y: 0.5 },
+    evidence: null,
+    reviewStatus: "confirmed",
+    source: "manual"
+    ,
+    favorite: true
+  });
+  state.events.sort((a, b) => a.timestamp - b.timestamp);
+  rebuildHighlights();
+  scheduleProjectPersist();
+  renderAll();
+}
+
+function navigateEvent(direction) {
+  const events = getActiveEvents().slice().sort((a, b) => a.timestamp - b.timestamp);
+  if (!events.length) return;
+  const current = video.currentTime;
+  const target = direction > 0
+    ? events.find((event) => event.timestamp > current + 0.08) || events[0]
+    : events.slice().reverse().find((event) => event.timestamp < current - 0.08) || events[events.length - 1];
+  video.currentTime = target.timestamp;
+  updatePlaybackProgress();
+}
+
+function reviewNearestEvent(action) {
+  const event = getActiveEvents().reduce((nearest, candidate) => {
+    if (!nearest || Math.abs(candidate.timestamp - video.currentTime) < Math.abs(nearest.timestamp - video.currentTime)) {
+      return candidate;
+    }
+    return nearest;
+  }, null);
+  if (!event || Math.abs(event.timestamp - video.currentTime) > 2) return;
+  if (action === "confirm") {
+    event.reviewStatus = event.reviewStatus === "confirmed" ? "unreviewed" : "confirmed";
+  }
+  if (action === "ignore") {
+    event.reviewStatus = "ignored";
+  }
+  rebuildHighlights();
+  scheduleProjectPersist();
+  renderAll();
+}
+
+function handleEditorShortcut(event) {
+  const target = event.target;
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLSelectElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLButtonElement ||
+    target.isContentEditable
+  ) return;
+  if (event.code === "Space") {
+    event.preventDefault();
+    if (video.paused) video.play();
+    else video.pause();
+  } else if (event.key === "ArrowLeft") {
+    video.currentTime = clamp(video.currentTime - 1, 0, state.duration);
+  } else if (event.key === "ArrowRight") {
+    video.currentTime = clamp(video.currentTime + 1, 0, state.duration);
+  } else if (event.key.toLowerCase() === "p") {
+    navigateEvent(-1);
+  } else if (event.key.toLowerCase() === "n") {
+    navigateEvent(1);
+  } else if (event.key.toLowerCase() === "m") {
+    addHitAtCurrentTime();
+  } else if (event.key.toLowerCase() === "c") {
+    reviewNearestEvent("confirm");
+  } else if (event.key.toLowerCase() === "i") {
+    reviewNearestEvent("ignore");
+  }
 }
 
 function formatEvidence(evidence) {
@@ -206,7 +908,8 @@ function renderMetrics() {
   $("durationLabel").textContent = `${formatTime(video.currentTime)} / ${formatTime(state.duration)}`;
   $("metricOriginal").textContent = state.duration ? formatTime(state.duration) : "--";
   $("metricKept").textContent = state.duration ? formatTime(kept) : "--";
-  $("metricEvents").textContent = state.events.length ? String(state.events.length) : "--";
+  const activeEvents = getActiveEvents();
+  $("metricEvents").textContent = state.events.length ? String(activeEvents.length) : "--";
   $("metricHighlights").textContent = state.highlights.length ? String(state.highlights.length) : "--";
 }
 
@@ -214,6 +917,7 @@ function renderAll() {
   renderTimeline();
   renderEvents();
   renderMetrics();
+  renderTrainingReport();
 }
 
 function sizeCanvasToVideo() {
@@ -322,8 +1026,81 @@ function makeDecisionPayload() {
     highlights: state.highlights
     ,
     trajectory: state.trajectory,
-    analysis_quality: state.analysisQuality
+    analysis_quality: state.analysisQuality,
+    training_summary: state.analysisQuality ? buildTrainingSummary() : null
   };
+}
+
+function downloadTrainingReport() {
+  if (!state.analysisQuality) return;
+  const summary = buildTrainingSummary();
+  const escapeHtml = (value) => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+  const eventRows = state.events.map((event) => `
+    <tr>
+      <td>${formatTime(event.timestamp)}</td>
+      <td>${escapeHtml(event.label)}</td>
+      <td>${Math.round(event.confidence * 100)}%</td>
+      <td>${Math.round(getHighlightScore(event, getActiveEvents()) * 100)}</td>
+      <td>${escapeHtml(event.reviewStatus === "confirmed" ? "已确认" : event.reviewStatus === "ignored" ? "已忽略" : event.source === "manual" ? "手动添加" : "待确认")}</td>
+      <td>${escapeHtml(formatEvidence(event.evidence))}</td>
+    </tr>
+  `).join("");
+  const cutRows = state.segments
+    .filter((segment) => segment.type === "remove")
+    .map((segment) => `
+      <tr>
+        <td>${formatTime(segment.start)}–${formatTime(segment.end)}</td>
+        <td>${escapeHtml(segment.reason)}</td>
+        <td>${segment.restored ? "已恢复" : "建议删除"}</td>
+      </tr>
+    `).join("");
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>剪球训练报告</title>
+  <style>
+    body{max-width:1080px;margin:40px auto;padding:0 24px;color:#182027;font:15px/1.6 Arial,"Microsoft YaHei",sans-serif}
+    h1,h2{margin:0 0 12px}h1{font-size:30px}h2{margin-top:30px;font-size:20px}
+    .muted{color:#66727d}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:24px 0}
+    .metric{border:1px solid #d8dee3;border-radius:6px;padding:14px}.metric span{display:block;color:#66727d;font-size:12px}.metric strong{font-size:21px}
+    table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border-bottom:1px solid #d8dee3;padding:9px 7px;text-align:left;vertical-align:top}
+    th{background:#f4f7f8;font-size:12px}@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}table{font-size:12px}}
+  </style>
+</head>
+<body>
+  <p class="muted">剪球 · 本地生成</p>
+  <h1>${escapeHtml(sportProfiles[$("sportSelect").value].name)}训练报告</h1>
+  <p class="muted">${escapeHtml(state.file?.name || "")} · ${new Date().toLocaleString("zh-CN")}</p>
+  <div class="metrics">
+    <div class="metric"><span>视频时长</span><strong>${formatTime(summary.duration)}</strong></div>
+    <div class="metric"><span>有效运动</span><strong>${Math.round(summary.keptRatio * 100)}%</strong></div>
+    <div class="metric"><span>有效击球</span><strong>${summary.activeEvents}</strong></div>
+    <div class="metric"><span>识别可信度</span><strong>${summary.trustLabel}</strong></div>
+    <div class="metric"><span>平均间隔</span><strong>${summary.averageInterval == null ? "--" : `${summary.averageInterval.toFixed(1)} 秒`}</strong></div>
+    <div class="metric"><span>最长连续</span><strong>${summary.longestSequence} 次</strong></div>
+    <div class="metric"><span>轨迹覆盖</span><strong>${Math.round(summary.trajectoryCoverage * 100)}%</strong></div>
+    <div class="metric"><span>机位稳定</span><strong>${Math.round(summary.cameraStability * 100)}%</strong></div>
+  </div>
+  <h2>拍摄质量</h2>
+  <p>清晰度 ${Math.round(summary.medianSharpness)}，亮度 ${Math.round(summary.medianBrightness)}。${escapeHtml(summary.recommendations.join("；"))}</p>
+  <h2>击球与关键动作</h2>
+  <table><thead><tr><th>时间</th><th>类型</th><th>置信度</th><th>精彩分</th><th>审阅</th><th>证据</th></tr></thead><tbody>${eventRows || '<tr><td colspan="6">暂无事件</td></tr>'}</tbody></table>
+  <h2>等待与冗余建议</h2>
+  <table><thead><tr><th>时间</th><th>原因</th><th>状态</th></tr></thead><tbody>${cutRows || '<tr><td colspan="3">暂无删除建议</td></tr>'}</tbody></table>
+  <p class="muted">本报告由本地 OpenCV 轨迹分析生成，疑似击球不等同于裁判级判定。</p>
+</body>
+</html>`;
+  downloadText(
+    `jianqiu-training-report-${Date.now()}.html`,
+    html,
+    "text/html;charset=utf-8"
+  );
 }
 
 function downloadText(filename, text, type) {
@@ -349,7 +1126,11 @@ async function waitForSeek(targetVideo, time) {
 
 async function exportPreview() {
   if (!state.file || !state.duration) return;
-  const kept = getKeptSegments().slice(0, 10);
+  const kept = getExportSegments().slice(0, 12);
+  if (!kept.length) {
+    setLog(["没有可导出的片段。", "请确认或收藏击球候选，或切换到其他剪辑目标。"]);
+    return;
+  }
   const exportVideo = document.createElement("video");
   exportVideo.src = state.url;
   exportVideo.muted = true;
@@ -498,6 +1279,33 @@ function getOutputSize(sourceW, sourceH, ratio) {
   return { width: Math.round(sourceW * scale), height: Math.round(sourceH * scale) };
 }
 
+function mergeExportSegments(segments) {
+  if (!segments.length) return [];
+  const sorted = segments
+    .map((segment) => ({ ...segment }))
+    .sort((a, b) => a.start - b.start);
+  const merged = [sorted[0]];
+  sorted.slice(1).forEach((segment) => {
+    const previous = merged[merged.length - 1];
+    if (segment.start <= previous.end + 0.25) {
+      previous.end = Math.max(previous.end, segment.end);
+    } else {
+      merged.push(segment);
+    }
+  });
+  return merged;
+}
+
+function getExportSegments() {
+  if ($("modeSelect").value === "highlights") {
+    const selected = state.highlights
+      .filter((highlight) => highlight.favorite || highlight.score >= 0.7)
+      .slice(0, 12);
+    return mergeExportSegments(selected);
+  }
+  return getKeptSegments();
+}
+
 function getRecorderOptions(candidates) {
   const mimeType = candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
   return mimeType ? { mimeType } : undefined;
@@ -583,15 +1391,24 @@ video.addEventListener("pause", () => {
 });
 
 $("analyzeBtn").addEventListener("click", generateAnalysis);
+$("cancelAnalyzeBtn").addEventListener("click", cancelAnalysis);
+$("addHitBtn").addEventListener("click", addHitAtCurrentTime);
+$("previousEventBtn").addEventListener("click", () => navigateEvent(-1));
+$("nextEventBtn").addEventListener("click", () => navigateEvent(1));
+$("calibrateBallBtn").addEventListener("click", startBallColorCalibration);
+$("resetBallColorBtn").addEventListener("click", resetBallColor);
+document.querySelector(".player-frame").addEventListener("click", sampleBallColor);
 $("demoBtn").addEventListener("click", createDemoVideo);
 $("restoreBtn").addEventListener("click", () => {
   state.restored = !state.restored;
   $("restoreBtn").textContent = state.restored ? "重新删除" : "恢复全部";
+  scheduleProjectPersist();
   renderAll();
 });
 $("decisionBtn").addEventListener("click", () => {
   downloadText("jianqiu-edit-decision.json", JSON.stringify(makeDecisionPayload(), null, 2), "application/json");
 });
+$("downloadReportBtn").addEventListener("click", downloadTrainingReport);
 $("exportBtn").addEventListener("click", exportPreview);
 $("timeline").addEventListener("click", (event) => {
   if (!state.duration) return;
@@ -601,5 +1418,6 @@ $("timeline").addEventListener("click", (event) => {
   updatePlaybackProgress();
 });
 window.addEventListener("resize", sizeCanvasToVideo);
+window.addEventListener("keydown", handleEditorShortcut);
 
 renderAll();

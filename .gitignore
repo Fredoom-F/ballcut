@@ -23,6 +23,7 @@ uploads/
 tests/artifacts/
 tests/fixtures/
 tests/real-video-*.json
+tests/real-*.json
 tests/curl-test.json
 
 # Generated packages

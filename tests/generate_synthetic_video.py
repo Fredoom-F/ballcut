@@ -39,7 +39,7 @@ def draw_player(frame, x, y, color, racket_side=1):
     cv2.ellipse(frame, (x + 88 * racket_side, y - 52), (17, 27), 0, 0, 360, (210, 210, 210), 3)
 
 
-def generate(path):
+def generate(path, ball_bgr=(45, 240, 245)):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     writer = cv2.VideoWriter(
@@ -67,8 +67,9 @@ def generate(path):
             draw_player(frame, 780, 245, (245, 150, 70), -1)
 
         x, y = ball_position(t)
-        cv2.circle(frame, (x, y), 11, (45, 240, 245), -1)
-        cv2.circle(frame, (x, y), 11, (20, 160, 170), 2)
+        cv2.circle(frame, (x, y), 11, ball_bgr, -1)
+        outline = tuple(max(0, int(channel * 0.65)) for channel in ball_bgr)
+        cv2.circle(frame, (x, y), 11, outline, 2)
         cv2.putText(frame, f"t={t:04.1f}", (25, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         writer.write(frame)
 

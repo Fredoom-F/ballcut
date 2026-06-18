@@ -56,6 +56,74 @@ def run():
         assert len(result["events"]) == 4
         assert len(result["trajectory"]) >= 70
 
+        async_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=120)
+        async_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis&strength=3",
+            body=payload,
+            headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(payload))},
+        )
+        async_response = async_connection.getresponse()
+        async_body = async_response.read().decode("utf-8")
+        assert async_response.status == 202, async_body
+        job_id = json.loads(async_body)["id"]
+
+        observed_progress = []
+        observed_eta = []
+        deadline = time.time() + 120
+        status = None
+        while time.time() < deadline:
+            status_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+            status_connection.request("GET", f"/api/analyze/status?id={job_id}")
+            status_response = status_connection.getresponse()
+            status = json.loads(status_response.read().decode("utf-8"))
+            assert status_response.status == 200, status
+            observed_progress.append(status["progress"])
+            if status.get("etaSeconds") is not None:
+                observed_eta.append(status["etaSeconds"])
+            if status["status"] == "completed":
+                break
+            assert status["status"] not in {"failed", "cancelled"}, status
+            time.sleep(0.25)
+
+        assert status and status["status"] == "completed", status
+        assert max(observed_progress) >= 0.9, observed_progress
+        assert observed_eta, "analysis never reported an ETA"
+        assert any(value > 0 for value in observed_eta), observed_eta
+
+        result_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        result_connection.request("GET", f"/api/analyze/result?id={job_id}")
+        result_response = result_connection.getresponse()
+        async_result = json.loads(result_response.read().decode("utf-8"))
+        assert result_response.status == 200, async_result
+        assert len(async_result["events"]) == 4
+
+        cancel_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=120)
+        cancel_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis&strength=3",
+            body=payload,
+            headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(payload))},
+        )
+        cancel_start_response = cancel_connection.getresponse()
+        cancel_start_body = json.loads(cancel_start_response.read().decode("utf-8"))
+        assert cancel_start_response.status == 202, cancel_start_body
+        cancel_job_id = cancel_start_body["id"]
+
+        delete_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        delete_connection.request("DELETE", f"/api/analyze/cancel?id={cancel_job_id}")
+        delete_response = delete_connection.getresponse()
+        cancelled = json.loads(delete_response.read().decode("utf-8"))
+        assert delete_response.status == 200, cancelled
+        assert cancelled["status"] == "cancelled", cancelled
+        time.sleep(0.75)
+
+        cancelled_status_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        cancelled_status_connection.request("GET", f"/api/analyze/status?id={cancel_job_id}")
+        cancelled_status_response = cancelled_status_connection.getresponse()
+        cancelled_status = json.loads(cancelled_status_response.read().decode("utf-8"))
+        assert cancelled_status["status"] == "cancelled", cancelled_status
+
         leftovers = list(Path(tempfile.gettempdir()).glob("jianqiu-*.video"))
         assert not leftovers, f"temporary uploads were not deleted: {leftovers}"
         print(
@@ -64,6 +132,9 @@ def run():
                     "status": response.status,
                     "events": len(result["events"]),
                     "trajectory_points": len(result["trajectory"]),
+                    "progress_samples": len(observed_progress),
+                    "eta_samples": len(observed_eta),
+                    "cancel_status": cancelled_status["status"],
                     "temporary_files": len(leftovers),
                 },
                 ensure_ascii=False,

@@ -45,6 +45,10 @@ def run():
     assert matched >= 4, "hit recall is below delivery threshold"
     assert idle_overlap >= 2.5, "idle segment was not identified"
     assert len(actual) <= 10, "too many false hit candidates"
+    assert 0 <= result["quality"]["cameraStability"] <= 1
+    assert result["quality"]["medianSharpness"] > 0
+    assert result["quality"]["medianBrightness"] > 0
+    assert result["quality"]["recommendations"]
 
     no_ball_fixture = ROOT / "tests" / "fixtures" / "synthetic-no-ball.avi"
     generate_no_ball(no_ball_fixture)
@@ -57,6 +61,32 @@ def run():
     print(json.dumps({"no_ball_video": no_ball_metrics}, ensure_ascii=False, indent=2))
     assert len(no_ball_result["events"]) == 0, "no-ball video produced false hit events"
     assert no_ball_result["quality"]["warning"], "no-ball video must explain that tracking failed"
+
+    blue_ball_fixture = ROOT / "tests" / "fixtures" / "synthetic-blue-ball.avi"
+    generate(blue_ball_fixture, ball_bgr=(30, 30, 240))
+    calibrated_result = analyze_video(
+        blue_ball_fixture,
+        "tennis",
+        strength=3,
+        ball_rgb=[240, 30, 30],
+    )
+    calibrated_times = [event["timestamp"] for event in calibrated_result["events"]]
+    calibrated_matches = sum(nearest_error(calibrated_times, expected) <= 0.55 for expected in HIT_TIMES)
+    print(
+        json.dumps(
+            {
+                "calibrated_ball": {
+                    "events": calibrated_times,
+                    "trajectory_points": len(calibrated_result["trajectory"]),
+                    "matched_hits": calibrated_matches,
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    assert len(calibrated_result["trajectory"]) >= 70
+    assert calibrated_matches >= 4
 
 
 if __name__ == "__main__":

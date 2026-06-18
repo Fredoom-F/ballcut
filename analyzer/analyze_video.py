@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -67,6 +68,30 @@ def make_color_mask(hsv, config):
             cv2.inRange(hsv, np.array(lower, dtype=np.uint8), np.array(upper, dtype=np.uint8)),
         )
     return result
+
+
+def ranges_from_rgb(ball_rgb):
+    red, green, blue = ball_rgb
+    pixel = np.uint8([[[blue, green, red]]])
+    hue, saturation, value = cv2.cvtColor(pixel, cv2.COLOR_BGR2HSV)[0, 0].tolist()
+    hue_padding = 11
+    saturation_min = max(45, saturation - 65)
+    value_min = max(55, value - 80)
+    upper_saturation = min(255, saturation + 45)
+    upper_value = min(255, value + 65)
+    low_hue = hue - hue_padding
+    high_hue = hue + hue_padding
+    if low_hue < 0:
+        return [
+            ((0, saturation_min, value_min), (high_hue, upper_saturation, upper_value)),
+            ((180 + low_hue, saturation_min, value_min), (179, upper_saturation, upper_value)),
+        ]
+    if high_hue > 179:
+        return [
+            ((low_hue, saturation_min, value_min), (179, upper_saturation, upper_value)),
+            ((0, saturation_min, value_min), (high_hue - 180, upper_saturation, upper_value)),
+        ]
+    return [((low_hue, saturation_min, value_min), (high_hue, upper_saturation, upper_value))]
 
 
 def contour_candidates(frame, previous_gray, config, last_point, predicted_point):
@@ -188,24 +213,25 @@ def rolling_camera_stable(motion_samples, timestamp, window=0.55):
 
 def point_in_sport_event_area(point, sport):
     if sport in {"tennis", "badminton"}:
-        return 0.03 <= point["xNorm"] <= 0.97 and 0.16 <= point["yNorm"] <= 0.90
+        return 0.03 <= point["xNorm"] <= 0.97 and 0.24 <= point["yNorm"] <= 0.90
     return 0.02 <= point["xNorm"] <= 0.98 and 0.04 <= point["yNorm"] <= 0.96
 
 
-def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples):
+def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sensitivity):
     events = []
     if len(track) < 5:
         return events
 
-    min_speed = frame_diagonal * 0.09
-    acceleration_threshold = frame_diagonal * 0.18
+    min_speed = frame_diagonal * {1: 0.11, 2: 0.09, 3: 0.07}.get(sensitivity, 0.09)
+    acceleration_threshold = frame_diagonal * {1: 0.22, 2: 0.18, 3: 0.14}.get(sensitivity, 0.18)
+    direction_threshold = {1: -0.62, 2: -0.48, 3: -0.32}.get(sensitivity, -0.48)
     for index in range(2, len(track) - 2):
         before = track[index - 2]
         center = track[index]
         after = track[index + 2]
         local_points = track[index - 2 : index + 3]
         if any(
-            local_points[position + 1]["time"] - local_points[position]["time"] > 0.35
+            local_points[position + 1]["time"] - local_points[position]["time"] > 0.55
             for position in range(len(local_points) - 1)
         ):
             continue
@@ -226,7 +252,7 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples):
         direction_cosine = float(np.dot(v1, v2) / denominator) if denominator else 1.0
         acceleration = float(np.linalg.norm(v2 - v1))
 
-        direction_reversal = direction_cosine < -0.48
+        direction_reversal = direction_cosine < direction_threshold
         speed_ratio = max(speed_before, speed_after) / max(1.0, min(speed_before, speed_after))
         sharp_acceleration = acceleration > acceleration_threshold and speed_ratio > 2.2
         moving = max(speed_before, speed_after) > min_speed
@@ -370,8 +396,19 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
     return segments
 
 
-def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
-    config = SPORT_CONFIG.get(sport, SPORT_CONFIG["tennis"])
+def analyze_video(
+    path,
+    sport="tennis",
+    strength=2,
+    max_seconds=900,
+    progress_callback=None,
+    ball_rgb=None,
+    sensitivity=2,
+):
+    base_config = SPORT_CONFIG.get(sport, SPORT_CONFIG["tennis"])
+    config = {**base_config, "ranges": list(base_config["ranges"])}
+    if ball_rgb:
+        config["ranges"] = ranges_from_rgb(ball_rgb)
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         raise RuntimeError("无法读取视频文件")
@@ -398,10 +435,27 @@ def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
     missing_frames = 0
     track = []
     motion_samples = []
+    sharpness_samples = []
+    brightness_samples = []
     frame_index = 0
+    analysis_started = time.perf_counter()
+    last_progress_at = 0.0
+
+    if progress_callback:
+        progress_callback(
+            {
+                "phase": "analyzing",
+                "progress": 0.0,
+                "processedSeconds": 0.0,
+                "totalSeconds": round(duration, 3),
+                "elapsedSeconds": 0.0,
+                "etaSeconds": None,
+                "processingFps": 0.0,
+            }
+        )
 
     while capture.isOpened():
-        ok, frame = capture.read()
+        ok = capture.grab()
         if not ok:
             break
         timestamp = frame_index / source_fps
@@ -411,7 +465,15 @@ def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
             frame_index += 1
             continue
 
+        ok, frame = capture.retrieve()
+        if not ok:
+            break
+
         frame = cv2.resize(frame, (analysis_width, analysis_height), interpolation=cv2.INTER_AREA)
+        if len(motion_samples) % max(1, round(sample_fps / 2)) == 0:
+            quality_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            sharpness_samples.append(float(cv2.Laplacian(quality_gray, cv2.CV_64F).var()))
+            brightness_samples.append(float(np.mean(quality_gray)))
         predicted = None
         if last_point and previous_point:
             predicted = (
@@ -455,8 +517,41 @@ def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
         previous_gray = gray
         frame_index += 1
 
+        if progress_callback:
+            elapsed = time.perf_counter() - analysis_started
+            progress = clamp(timestamp / duration, 0.0, 0.97)
+            if elapsed - last_progress_at >= 0.75 or progress >= 0.97:
+                processed_frames = max(1, frame_index)
+                processing_fps = processed_frames / max(elapsed, 0.001)
+                eta = elapsed * (1.0 - progress) / progress if progress > 0.01 else None
+                progress_callback(
+                    {
+                        "phase": "analyzing",
+                        "progress": round(progress, 4),
+                        "processedSeconds": round(timestamp, 2),
+                        "totalSeconds": round(duration, 3),
+                        "elapsedSeconds": round(elapsed, 2),
+                        "etaSeconds": round(eta, 1) if eta is not None else None,
+                        "processingFps": round(processing_fps, 2),
+                    }
+                )
+                last_progress_at = elapsed
+
     capture.release()
-    events = detect_events(track, sample_fps, frame_diagonal, sport, motion_samples)
+    if progress_callback:
+        elapsed = time.perf_counter() - analysis_started
+        progress_callback(
+            {
+                "phase": "finalizing",
+                "progress": 0.98,
+                "processedSeconds": round(duration, 2),
+                "totalSeconds": round(duration, 3),
+                "elapsedSeconds": round(elapsed, 2),
+                "etaSeconds": max(1.0, round(elapsed * 0.02, 1)),
+                "processingFps": round(frame_index / max(elapsed, 0.001), 2),
+            }
+        )
+    events = detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sensitivity)
     segments = build_segments(duration, track, events, motion_samples, strength, frame_diagonal)
     stable_track = [
         point
@@ -478,6 +573,25 @@ def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
     ]
 
     tracked_seconds = len(stable_track) / sample_fps
+    camera_stable_samples = sum(
+        1
+        for sample in motion_samples
+        if sample["cameraShift"] <= 2.0 and sample["energy"] <= 0.25
+    )
+    camera_stability = camera_stable_samples / max(1, len(motion_samples))
+    median_sharpness = float(np.median(sharpness_samples)) if sharpness_samples else 0.0
+    median_brightness = float(np.median(brightness_samples)) if brightness_samples else 0.0
+    recommendations = []
+    if tracked_seconds / duration < 0.1:
+        recommendations.append("球轨迹覆盖较低，建议暂停到球清晰可见的一帧并校准球颜色")
+    if median_sharpness < 45:
+        recommendations.append("画面偏模糊，建议使用更快快门或 60fps 拍摄")
+    if median_brightness < 55:
+        recommendations.append("画面偏暗，建议补光或提高曝光")
+    if camera_stability < 0.65:
+        recommendations.append("镜头移动较多，建议使用固定机位或三脚架")
+    if not recommendations:
+        recommendations.append("拍摄质量适合当前本地轨迹分析")
     return {
         "version": 2,
         "analysisType": "opencv-local",
@@ -494,6 +608,10 @@ def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
             "trackedPoints": len(stable_track),
             "trackedSeconds": round(tracked_seconds, 2),
             "coverage": round(clamp(tracked_seconds / duration, 0, 1), 3),
+            "cameraStability": round(camera_stability, 3),
+            "medianSharpness": round(median_sharpness, 1),
+            "medianBrightness": round(median_brightness, 1),
+            "recommendations": recommendations,
             "warning": None
             if len(stable_track) >= 8
             else "没有形成稳定球轨迹。请确认运动类型、球的颜色和视频清晰度。",
@@ -507,8 +625,16 @@ def analyze_video(path, sport="tennis", strength=2, max_seconds=900):
             "hit": "球轨迹连续、镜头稳定、候选靠近人体尺度运动区域，且方向变化或速度变化超过阈值",
             "idle": "持续低运动量且没有可靠移动球轨迹；全局镜头大幅移动也不计为有效运动",
             "highlight": "置信度不低于 0.58 的疑似击球事件前后片段",
+            "ballColor": f"用户校准 RGB{tuple(ball_rgb)}" if ball_rgb else "运动默认颜色范围",
+            "sensitivity": {1: "保守", 2: "标准", 3: "灵敏"}.get(sensitivity, "标准"),
         },
     }
+
+
+def emit_progress(payload):
+    message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    sys.stderr.write(f"JIANQIU_PROGRESS {message}\n")
+    sys.stderr.flush()
 
 
 def main():
@@ -517,8 +643,25 @@ def main():
     parser.add_argument("--sport", default="tennis")
     parser.add_argument("--strength", type=int, default=2)
     parser.add_argument("--output")
+    parser.add_argument("--progress", action="store_true")
+    parser.add_argument("--ball-rgb")
+    parser.add_argument("--sensitivity", type=int, default=2)
     args = parser.parse_args()
-    result = analyze_video(Path(args.video), args.sport, args.strength)
+    callback = emit_progress if args.progress else None
+    ball_rgb = None
+    if args.ball_rgb:
+        values = [int(value) for value in args.ball_rgb.split(",")]
+        if len(values) != 3 or any(value < 0 or value > 255 for value in values):
+            raise ValueError("--ball-rgb must be R,G,B values from 0 to 255")
+        ball_rgb = values
+    result = analyze_video(
+        Path(args.video),
+        args.sport,
+        args.strength,
+        progress_callback=callback,
+        ball_rgb=ball_rgb,
+        sensitivity=max(1, min(3, args.sensitivity)),
+    )
     payload = json.dumps(result, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(payload, encoding="utf-8")

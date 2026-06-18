@@ -9,6 +9,7 @@ const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
 const maxUploadBytes = 1024 * 1024 * 1024;
+const jobs = new Map();
 const types = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -27,6 +28,8 @@ function safePath(urlPath) {
 }
 
 const server = http.createServer((req, res) => {
+    const requestUrl = new URL(req.url || "/", `http://127.0.0.1:${port}`);
+
     if (req.url === "/health") {
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
@@ -36,7 +39,27 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (req.url?.startsWith("/api/analyze") && req.method === "POST") {
+    if (requestUrl.pathname === "/api/analyze/start" && req.method === "POST") {
+      startAnalyzeJob(req, res, requestUrl);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analyze/status" && req.method === "GET") {
+      getAnalyzeJobStatus(res, requestUrl.searchParams.get("id"));
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analyze/result" && req.method === "GET") {
+      getAnalyzeJobResult(res, requestUrl.searchParams.get("id"));
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analyze/cancel" && req.method === "DELETE") {
+      cancelAnalyzeJob(res, requestUrl.searchParams.get("id"));
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/analyze" && req.method === "POST") {
       analyzeRequest(req, res);
       return;
     }
@@ -66,73 +89,256 @@ const server = http.createServer((req, res) => {
     });
   });
 
-function analyzeRequest(req, res) {
-  const requestUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+function validateAnalyzeOptions(requestUrl) {
   const sport = requestUrl.searchParams.get("sport") || "tennis";
   const strength = Math.max(1, Math.min(3, Number(requestUrl.searchParams.get("strength") || 2)));
+  const sensitivity = Math.max(1, Math.min(3, Number(requestUrl.searchParams.get("sensitivity") || 2)));
+  const ballValue = requestUrl.searchParams.get("ball");
   const allowedSports = new Set(["tennis", "badminton", "tabletennis", "basketball", "football", "golf"]);
-  if (!allowedSports.has(sport)) {
+  if (!allowedSports.has(sport)) return null;
+  let ballColor = null;
+  if (ballValue) {
+    const channels = ballValue.split(",").map(Number);
+    if (channels.length !== 3 || channels.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+      return null;
+    }
+    ballColor = channels;
+  }
+  return { sport, strength, sensitivity, ballColor };
+}
+
+function startAnalyzeJob(req, res, requestUrl) {
+  const options = validateAnalyzeOptions(requestUrl);
+  if (!options) {
     sendJson(res, 400, { error: "不支持的运动类型" });
     return;
   }
 
+  receiveUpload(req, res, (tempPath, received) => {
+    const id = crypto.randomBytes(12).toString("hex");
+    const job = {
+      id,
+      status: "analyzing",
+      phase: "analyzing",
+      progress: 0,
+      etaSeconds: null,
+      processingFps: 0,
+      processedSeconds: 0,
+      totalSeconds: null,
+      uploadBytes: received,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      tempPath,
+      result: null,
+      error: null,
+      child: null
+    };
+    jobs.set(id, job);
+    const analyzer = runAnalyzer(
+      tempPath,
+      options.sport,
+      options.strength,
+      options.sensitivity,
+      options.ballColor,
+      (progress) => {
+      Object.assign(job, progress, {
+        status: progress.phase === "finalizing" ? "finalizing" : "analyzing",
+        updatedAt: Date.now()
+      });
+      },
+      true
+    );
+    job.child = analyzer.child;
+
+    analyzer.promise
+      .then((result) => {
+        job.status = "completed";
+        job.phase = "completed";
+        job.progress = 1;
+        job.etaSeconds = 0;
+        job.result = result;
+        job.updatedAt = Date.now();
+      })
+      .catch((error) => {
+        if (job.status !== "cancelled") {
+          job.status = "failed";
+          job.phase = "failed";
+          job.error = error.message || "本地分析失败";
+          job.updatedAt = Date.now();
+        }
+      })
+      .finally(() => {
+        job.child = null;
+        fs.rm(tempPath, { force: true }, () => {});
+        setTimeout(() => jobs.delete(id), 60 * 60 * 1000).unref();
+      });
+
+    sendJson(res, 202, { id, status: job.status });
+  });
+}
+
+function getAnalyzeJobStatus(res, id) {
+  const job = jobs.get(id);
+  if (!job) {
+    sendJson(res, 404, { error: "分析任务不存在或已过期" });
+    return;
+  }
+  sendJson(res, 200, publicJobState(job));
+}
+
+function getAnalyzeJobResult(res, id) {
+  const job = jobs.get(id);
+  if (!job) {
+    sendJson(res, 404, { error: "分析任务不存在或已过期" });
+    return;
+  }
+  if (job.status !== "completed") {
+    sendJson(res, 409, { error: "分析尚未完成", ...publicJobState(job) });
+    return;
+  }
+  sendJson(res, 200, job.result);
+}
+
+function cancelAnalyzeJob(res, id) {
+  const job = jobs.get(id);
+  if (!job) {
+    sendJson(res, 404, { error: "分析任务不存在或已过期" });
+    return;
+  }
+  if (job.child) job.child.kill();
+  job.status = "cancelled";
+  job.phase = "cancelled";
+  job.error = "用户已取消分析";
+  job.etaSeconds = 0;
+  job.updatedAt = Date.now();
+  fs.rm(job.tempPath, { force: true }, () => {});
+  sendJson(res, 200, publicJobState(job));
+}
+
+function publicJobState(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    phase: job.phase,
+    progress: job.progress,
+    etaSeconds: job.etaSeconds,
+    processingFps: job.processingFps,
+    processedSeconds: job.processedSeconds,
+    totalSeconds: job.totalSeconds,
+    uploadBytes: job.uploadBytes,
+    elapsedSeconds: job.elapsedSeconds || 0,
+    error: job.error,
+    updatedAt: job.updatedAt
+  };
+}
+
+function receiveUpload(req, res, onComplete) {
   const requestId = crypto.randomBytes(12).toString("hex");
   const tempPath = path.join(os.tmpdir(), `jianqiu-${requestId}.video`);
   const output = fs.createWriteStream(tempPath, { flags: "wx" });
   let received = 0;
   let aborted = false;
 
+  function cleanup() {
+    output.destroy();
+    fs.rm(tempPath, { force: true }, () => {});
+  }
+
   req.on("data", (chunk) => {
     received += chunk.length;
     if (received > maxUploadBytes) {
       aborted = true;
-      req.destroy();
-      output.destroy();
-      fs.rm(tempPath, { force: true }, () => {});
+      cleanup();
       sendJson(res, 413, { error: "视频超过 1GB 本地分析限制" });
+      req.destroy();
       return;
     }
-    output.write(chunk);
+    if (!output.write(chunk)) {
+      req.pause();
+      output.once("drain", () => req.resume());
+    }
   });
 
   req.on("end", () => {
     if (aborted) return;
-    output.end(async () => {
-      try {
-        const result = await runAnalyzer(tempPath, sport, strength);
-        sendJson(res, 200, result);
-      } catch (error) {
-        sendJson(res, 500, { error: error.message || "本地分析失败" });
-      } finally {
-        fs.rm(tempPath, { force: true }, () => {});
-      }
-    });
+    output.end(() => onComplete(tempPath, received));
   });
 
-  req.on("error", () => {
-    output.destroy();
-    fs.rm(tempPath, { force: true }, () => {});
+  req.on("aborted", cleanup);
+  req.on("error", cleanup);
+  output.on("error", (error) => {
+    aborted = true;
+    cleanup();
+    sendJson(res, 500, { error: `无法保存本地临时视频：${error.message}` });
   });
 }
 
-function runAnalyzer(videoPath, sport, strength) {
-  return new Promise((resolve, reject) => {
-    const script = path.join(projectRoot, "analyzer", "analyze_video.py");
-    const child = spawn(
-      "python",
-      [script, videoPath, "--sport", sport, "--strength", String(strength)],
-      {
-        cwd: projectRoot,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"]
-      }
-    );
+function analyzeRequest(req, res) {
+  const requestUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+  const options = validateAnalyzeOptions(requestUrl);
+  if (!options) {
+    sendJson(res, 400, { error: "不支持的运动类型" });
+    return;
+  }
+
+  receiveUpload(req, res, async (tempPath) => {
+    try {
+      const analyzer = runAnalyzer(
+        tempPath,
+        options.sport,
+        options.strength,
+        options.sensitivity,
+        options.ballColor
+      );
+      const result = await analyzer.promise;
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || "本地分析失败" });
+    } finally {
+      fs.rm(tempPath, { force: true }, () => {});
+    }
+  });
+}
+
+function runAnalyzer(videoPath, sport, strength, sensitivity, ballColor, onProgress, reportProgress = false) {
+  const script = path.join(projectRoot, "analyzer", "analyze_video.py");
+  const args = [script, videoPath, "--sport", sport, "--strength", String(strength)];
+  args.push("--sensitivity", String(sensitivity));
+  if (ballColor) args.push("--ball-rgb", ballColor.join(","));
+  if (reportProgress) args.push("--progress");
+  const child = spawn(
+    "python",
+    args,
+    {
+      cwd: projectRoot,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    }
+  );
+  const promise = new Promise((resolve, reject) => {
     const stdout = [];
     const stderr = [];
+    let stderrBuffer = "";
     child.stdout.on("data", (chunk) => stdout.push(chunk));
-    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.stderr.on("data", (chunk) => {
+      stderrBuffer += chunk.toString("utf8");
+      const lines = stderrBuffer.split(/\r?\n/);
+      stderrBuffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("JIANQIU_PROGRESS ")) {
+          try {
+            onProgress?.(JSON.parse(line.slice("JIANQIU_PROGRESS ".length)));
+          } catch {
+            stderr.push(Buffer.from(line));
+          }
+        } else if (line.trim()) {
+          stderr.push(Buffer.from(line));
+        }
+      }
+    });
     child.on("error", (error) => reject(new Error(`无法启动 OpenCV 分析器：${error.message}`)));
     child.on("close", (code) => {
+      if (stderrBuffer.trim()) stderr.push(Buffer.from(stderrBuffer));
       if (code !== 0) {
         reject(new Error(Buffer.concat(stderr).toString("utf8").trim() || "OpenCV 分析器异常退出"));
         return;
@@ -144,6 +350,7 @@ function runAnalyzer(videoPath, sport, strength) {
       }
     });
   });
+  return { promise, child };
 }
 
 function sendJson(res, status, payload) {

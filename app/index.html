@@ -41,6 +41,13 @@
             </select>
           </label>
 
+          <div class="calibration-control">
+            <button id="calibrateBallBtn" type="button" disabled>校准球颜色</button>
+            <button id="resetBallColorBtn" type="button" disabled>重置</button>
+            <span id="ballColorSwatch" class="ball-color-swatch" hidden></span>
+            <span id="ballColorStatus">使用运动默认球色</span>
+          </div>
+
           <label>
             剪辑目标
             <select id="modeSelect">
@@ -67,7 +74,35 @@
             <input id="cutStrength" type="range" min="1" max="3" value="2" />
           </label>
 
+          <label>
+            击球识别灵敏度
+            <select id="hitSensitivity">
+              <option value="1">保守，减少误报</option>
+              <option value="2" selected>标准</option>
+              <option value="3">灵敏，减少漏报</option>
+            </select>
+          </label>
+
+          <label class="toggle">
+            <input id="reuseCache" type="checkbox" checked />
+            <span>复用本机分析缓存</span>
+          </label>
+
           <button id="analyzeBtn" class="primary" disabled>开始本地分析</button>
+          <section id="analysisProgress" class="analysis-progress" hidden aria-live="polite">
+            <div class="analysis-progress-head">
+              <strong id="analysisPhase">准备分析</strong>
+              <span id="analysisPercent">0%</span>
+            </div>
+            <div class="analysis-progress-track">
+              <div id="analysisProgressBar" class="analysis-progress-bar"></div>
+            </div>
+            <div class="analysis-progress-meta">
+              <span id="analysisEta">正在估算剩余时间</span>
+              <span id="analysisSpeed"></span>
+            </div>
+            <button id="cancelAnalyzeBtn" type="button">取消分析</button>
+          </section>
           <button id="demoBtn">生成演示视频</button>
           <button id="exportBtn" disabled>导出带水印预览</button>
           <button id="decisionBtn" disabled>下载剪辑决策</button>
@@ -85,10 +120,14 @@
               <span id="fileName">等待上传视频</span>
               <strong id="durationLabel">00:00</strong>
             </div>
-            <label class="toggle">
-              <input id="smartSkip" type="checkbox" checked />
-              <span>播放时跳过冗余片段</span>
-            </label>
+            <div class="playback-tools">
+              <button id="previousEventBtn" type="button" disabled title="上一个击球">◀</button>
+              <button id="nextEventBtn" type="button" disabled title="下一个击球">▶</button>
+              <label class="toggle">
+                <input id="smartSkip" type="checkbox" checked />
+                <span>播放时跳过冗余片段</span>
+              </label>
+            </div>
           </div>
 
           <div class="timeline-wrap">
@@ -119,15 +158,31 @@
               <strong id="metricHighlights">--</strong>
             </article>
           </section>
+
+          <section id="trainingReport" class="training-report" hidden>
+            <div class="training-report-head">
+              <div>
+                <span>训练复盘</span>
+                <h2 id="trainingReportTitle">本次训练摘要</h2>
+              </div>
+              <button id="downloadReportBtn" type="button">下载 HTML 报告</button>
+            </div>
+            <div id="trainingReportMetrics" class="training-report-metrics"></div>
+            <p id="trainingReportNote"></p>
+          </section>
         </section>
 
         <aside class="panel event-list">
           <div class="panel-head">
             <h2>AI 结果</h2>
-            <button id="restoreBtn" disabled>恢复全部</button>
+            <div class="panel-actions">
+              <button id="addHitBtn" disabled>在此添加击球</button>
+              <button id="restoreBtn" disabled>恢复全部</button>
+            </div>
           </div>
           <div id="progressLog" class="progress-log">上传后会显示识别过程。</div>
           <div id="eventList"></div>
+          <div id="cutList"></div>
         </aside>
       </section>
     </main>
