@@ -19,6 +19,14 @@ npm start
 http://127.0.0.1:4173/
 ```
 
+Windows 用户也可以直接双击根目录的 `start-jianqiu.cmd`。请保持启动窗口开启，关闭窗口会停止本地服务。
+
+需要停止后台服务时，可运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\stop-jianqiu.ps1
+```
+
 ## 当前功能
 
 - 本地视频上传与预览
