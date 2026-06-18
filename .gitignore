@@ -20,6 +20,10 @@ Thumbs.db
 *.mkv
 exports/
 uploads/
+tests/artifacts/
+tests/fixtures/
+tests/real-video-*.json
+tests/curl-test.json
 
 # Generated packages
 dist/*.zip

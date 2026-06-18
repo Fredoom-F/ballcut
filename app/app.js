@@ -141,10 +141,6 @@ function renderTimeline() {
     div.style.left = `${(segment.start / state.duration) * 100}%`;
     div.style.width = `${Math.max(0.35, ((segment.end - segment.start) / state.duration) * 100)}%`;
     div.title = `${segment.type === "remove" ? segment.reason : "保留片段"} ${formatTime(segment.start)}-${formatTime(segment.end)}`;
-    div.addEventListener("click", () => {
-      video.currentTime = segment.start;
-      video.play();
-    });
     fragment.appendChild(div);
   });
 
@@ -163,6 +159,12 @@ function renderTimeline() {
     marker.title = `${event.label} ${formatTime(event.timestamp)}`;
     fragment.appendChild(marker);
   });
+
+  const playhead = document.createElement("div");
+  playhead.id = "timelinePlayhead";
+  playhead.className = "timeline-playhead";
+  playhead.style.left = `${state.duration ? (video.currentTime / state.duration) * 100 : 0}%`;
+  fragment.appendChild(playhead);
 
   timeline.appendChild(fragment);
 }
@@ -201,7 +203,7 @@ function formatEvidence(evidence) {
 
 function renderMetrics() {
   const kept = state.duration - getRemovedDuration();
-  $("durationLabel").textContent = formatTime(state.duration);
+  $("durationLabel").textContent = `${formatTime(video.currentTime)} / ${formatTime(state.duration)}`;
   $("metricOriginal").textContent = state.duration ? formatTime(state.duration) : "--";
   $("metricKept").textContent = state.duration ? formatTime(kept) : "--";
   $("metricEvents").textContent = state.events.length ? String(state.events.length) : "--";
@@ -297,6 +299,13 @@ function skipRemovedSegments() {
   if (!$("smartSkip").checked || state.restored || !state.segments.length || video.paused) return;
   const cut = state.segments.find((segment) => segment.type === "remove" && video.currentTime >= segment.start && video.currentTime < segment.end - 0.08);
   if (cut) video.currentTime = cut.end;
+}
+
+function updatePlaybackProgress() {
+  const progress = state.duration ? clamp(video.currentTime / state.duration, 0, 1) : 0;
+  const playhead = $("timelinePlayhead");
+  if (playhead) playhead.style.left = `${progress * 100}%`;
+  $("durationLabel").textContent = `${formatTime(video.currentTime)} / ${formatTime(state.duration)}`;
 }
 
 function makeDecisionPayload() {
@@ -559,7 +568,11 @@ video.addEventListener("loadedmetadata", () => {
   renderAll();
   setLog(["已读取视频信息。", `原片时长 ${formatTime(state.duration)}，可以开始分析。`]);
 });
-video.addEventListener("timeupdate", skipRemovedSegments);
+video.addEventListener("timeupdate", () => {
+  skipRemovedSegments();
+  updatePlaybackProgress();
+});
+video.addEventListener("seeked", updatePlaybackProgress);
 video.addEventListener("play", () => {
   cancelAnimationFrame(state.raf);
   drawEffects();
@@ -580,6 +593,13 @@ $("decisionBtn").addEventListener("click", () => {
   downloadText("jianqiu-edit-decision.json", JSON.stringify(makeDecisionPayload(), null, 2), "application/json");
 });
 $("exportBtn").addEventListener("click", exportPreview);
+$("timeline").addEventListener("click", (event) => {
+  if (!state.duration) return;
+  const rect = $("timeline").getBoundingClientRect();
+  const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+  video.currentTime = ratio * state.duration;
+  updatePlaybackProgress();
+});
 window.addEventListener("resize", sizeCanvasToVideo);
 
 renderAll();
