@@ -15,6 +15,8 @@ def run():
     stop_script = (ROOT / "stop-jianqiu.cmd").read_text(encoding="utf-8")
     background_start_script = (ROOT / "start-jianqiu.ps1").read_text(encoding="utf-8")
     watchdog_script = (ROOT / "run-jianqiu-service.ps1").read_text(encoding="utf-8")
+    release_check = (ROOT / "release-check.ps1").read_text(encoding="utf-8")
+    release_check_cmd = (ROOT / "release-check.cmd").read_text(encoding="utf-8")
     test_runner = (ROOT / "tests" / "run_all.py").read_text(encoding="utf-8")
     assert "opencv-python" in requirements
     assert "numpy" in requirements
@@ -38,6 +40,11 @@ def run():
     assert "node.WaitForExit()" in watchdog_script
     assert "restarting" in watchdog_script
     assert "MyInvocation.MyCommand.Path" in watchdog_script
+    assert "run_all.py" in release_check
+    assert "test_real_progress.py" in release_check
+    assert "test_real_video.py" in release_check
+    assert '$expectedVersion = "0.4.3"' in release_check
+    assert "release-check.ps1" in release_check_cmd
     assert "subprocess.TimeoutExpired" in test_runner
     assert "timeout=timeout" in test_runner
     assert "test_dom_bindings.py" in test_runner

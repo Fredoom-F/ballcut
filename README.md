@@ -134,6 +134,12 @@ cd app
 npm run test:real
 ```
 
+发布或换电脑后可双击 `release-check.cmd` 运行一键交付检查。需要连同真实 4K 视频一起验证时运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\release-check.ps1 -IncludeRealVideo
+```
+
 测试会自动生成已知击球时间和等待区间的合成网球视频，并验证：
 
 - 4 个击球全部命中

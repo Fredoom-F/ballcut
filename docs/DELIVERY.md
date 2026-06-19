@@ -108,6 +108,13 @@ npm run test:real-progress
 npm run test:real
 ```
 
+也可在仓库根目录运行：
+
+```powershell
+.\release-check.ps1
+.\release-check.ps1 -IncludeRealVideo
+```
+
 真实视频测试默认读取：
 
 ```text
