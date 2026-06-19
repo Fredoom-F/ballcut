@@ -15,6 +15,7 @@ def run():
     stop_script = (ROOT / "stop-jianqiu.cmd").read_text(encoding="utf-8")
     background_start_script = (ROOT / "start-jianqiu.ps1").read_text(encoding="utf-8")
     watchdog_script = (ROOT / "run-jianqiu-service.ps1").read_text(encoding="utf-8")
+    test_runner = (ROOT / "tests" / "run_all.py").read_text(encoding="utf-8")
     assert "opencv-python" in requirements
     assert "numpy" in requirements
     assert "setup-jianqiu.ps1" in setup_script
@@ -37,6 +38,8 @@ def run():
     assert "node.WaitForExit()" in watchdog_script
     assert "restarting" in watchdog_script
     assert "MyInvocation.MyCommand.Path" in watchdog_script
+    assert "subprocess.TimeoutExpired" in test_runner
+    assert "timeout=timeout" in test_runner
     print(f"Environment ready: OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
 
 
