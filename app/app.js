@@ -1,5 +1,7 @@
 const state = {
   file: null,
+  fileFingerprint: "",
+  fingerprintPromise: null,
   url: "",
   duration: 0,
   events: [],
@@ -50,6 +52,7 @@ const { buildExportReadiness } = window.JianqiuExportReadiness;
 const { buildCandidateReviewMetrics, buildConfidenceBuckets } = window.JianqiuReviewMetrics;
 const { buildAnnotationPayload } = window.JianqiuAnnotationExport;
 const { updateCutReview, cutReviewLabel } = window.JianqiuCutReview;
+const { quickFileFingerprint } = window.JianqiuFileFingerprint;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -336,10 +339,11 @@ function openAnalysisDb() {
 
 function getAnalysisCacheKey(file, sport, strength, sensitivity, preset, cameraAngle) {
   return [
-    "v4",
+    "v5",
     file.name,
     file.size,
     file.lastModified,
+    state.fileFingerprint || "fingerprint-pending",
     sport,
     strength,
     sensitivity,
@@ -741,6 +745,13 @@ function selectFile(file) {
   if (!file || !file.type.startsWith("video/")) return;
   if (state.url) URL.revokeObjectURL(state.url);
   state.file = file;
+  state.fileFingerprint = "";
+  state.fingerprintPromise = quickFileFingerprint(file)
+    .then((fingerprint) => {
+      if (state.file === file) state.fileFingerprint = fingerprint;
+      return fingerprint;
+    })
+    .catch(() => "");
   state.url = URL.createObjectURL(file);
   video.src = state.url;
   $("fileName").textContent = file.name;
@@ -786,6 +797,7 @@ function selectFile(file) {
 
 async function generateAnalysis() {
   if (!state.file || state.analyzing) return;
+  if (state.fingerprintPromise) await state.fingerprintPromise;
   if (!state.environmentReady) {
     await checkLocalAnalyzerEnvironment(true);
     if (!state.environmentReady) return;
@@ -2590,7 +2602,8 @@ function makeDecisionPayload() {
       name: state.file.name,
       size: state.file.size,
       lastModified: state.file.lastModified,
-      duration: state.duration
+      duration: state.duration,
+      quickHash: state.fileFingerprint
     } : null,
     duration: state.duration,
     sport: $("sportSelect").value,
@@ -2727,6 +2740,7 @@ async function importProjectFile(file) {
       throw new Error("项目时长与当前视频不匹配");
     }
     const fingerprint = payload.source_fingerprint;
+    if (state.fingerprintPromise) await state.fingerprintPromise;
     if (fingerprint?.duration && Math.abs(fingerprint.duration - state.duration) > 1) {
       throw new Error("项目指纹时长与当前视频不匹配");
     }
@@ -2735,6 +2749,9 @@ async function importProjectFile(file) {
       if (Math.abs(fingerprint.size - state.file.size) > sizeTolerance) {
         throw new Error("项目文件大小与当前视频不匹配，可能选错了原视频");
       }
+    }
+    if (fingerprint?.quickHash && state.fileFingerprint && fingerprint.quickHash !== state.fileFingerprint) {
+      throw new Error("项目视频内容指纹与当前视频不匹配，可能选错了原视频");
     }
     const validNormalizedPoint = (point) =>
       point &&

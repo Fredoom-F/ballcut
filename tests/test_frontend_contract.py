@@ -224,6 +224,7 @@ def run():
     assert "./review-metrics.js" in html
     assert "./annotation-export.js" in html
     assert "./cut-review.js" in html
+    assert "./file-fingerprint.js" in html
     assert "buildExportReadiness" in app_js
     assert "renderExportReadiness" in app_js
     assert "getCutReviewStats" in app_js
@@ -232,6 +233,8 @@ def run():
     assert ".cut-actions" in styles
     assert "updateCutReview" in app_js
     assert "cutReviewLabel" in app_js
+    assert "quickFileFingerprint" in app_js
+    assert "fingerprint.quickHash !== state.fileFingerprint" in app_js
     assert 'aria-label="选择本地视频"' in html
     assert 'role="slider"' in html
     assert 'tabindex="0"' in html
