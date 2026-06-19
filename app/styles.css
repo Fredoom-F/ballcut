@@ -471,6 +471,13 @@ video,
   padding: 0 12px;
 }
 
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .training-report-metrics {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -502,6 +509,35 @@ video,
   font-size: 13px;
 }
 
+.shot-map-wrap {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.shot-map-wrap > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shot-map-wrap span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#shotMap {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101418;
+  cursor: crosshair;
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -520,6 +556,12 @@ video,
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.panel-actions select {
+  min-height: 34px;
+  width: auto;
+  max-width: 120px;
 }
 
 .progress-log {
@@ -580,6 +622,25 @@ video,
   display: inline-block;
   margin-top: 5px;
   color: var(--accent);
+}
+
+.event-annotation {
+  display: grid;
+  grid-template-columns: 90px minmax(120px, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.event-annotation select,
+.event-annotation input {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #11151a;
+  color: var(--text);
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .result-section-title {

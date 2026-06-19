@@ -70,6 +70,25 @@
           </label>
 
           <label>
+            击球特效样式
+            <select id="effectStyle">
+              <option value="clean">干净轨迹</option>
+              <option value="energy">能量爆点</option>
+              <option value="minimal">极简标记</option>
+            </select>
+          </label>
+
+          <label class="toggle">
+            <input id="showTrajectory" type="checkbox" checked />
+            <span>显示球轨迹</span>
+          </label>
+
+          <label class="toggle">
+            <input id="showImpact" type="checkbox" checked />
+            <span>显示击球爆点</span>
+          </label>
+
+          <label>
             自动删除强度
             <input id="cutStrength" type="range" min="1" max="3" value="2" />
           </label>
@@ -83,9 +102,28 @@
             </select>
           </label>
 
+          <label>
+            分析精度
+            <select id="analysisPreset">
+              <option value="fast">快速预筛</option>
+              <option value="standard" selected>标准</option>
+              <option value="precise">精细追踪</option>
+            </select>
+          </label>
+
           <label class="toggle">
             <input id="reuseCache" type="checkbox" checked />
             <span>复用本机分析缓存</span>
+          </label>
+
+          <label class="toggle">
+            <input id="keepAudio" type="checkbox" checked />
+            <span>导出时保留原声</span>
+          </label>
+
+          <label class="toggle">
+            <input id="autoSlowMotion" type="checkbox" checked />
+            <span>精彩击球自动慢放</span>
           </label>
 
           <button id="analyzeBtn" class="primary" disabled>开始本地分析</button>
@@ -104,6 +142,8 @@
             <button id="cancelAnalyzeBtn" type="button">取消分析</button>
           </section>
           <button id="demoBtn">生成演示视频</button>
+          <button id="importProjectBtn" type="button">导入剪辑项目</button>
+          <input id="projectInput" type="file" accept="application/json,.json" hidden />
           <button id="exportBtn" disabled>导出带水印预览</button>
           <button id="decisionBtn" disabled>下载剪辑决策</button>
         </aside>
@@ -165,10 +205,22 @@
                 <span>训练复盘</span>
                 <h2 id="trainingReportTitle">本次训练摘要</h2>
               </div>
-              <button id="downloadReportBtn" type="button">下载 HTML 报告</button>
+              <div class="report-actions">
+                <button id="bestHighlightBtn" type="button">定位最佳</button>
+                <button id="downloadCoverBtn" type="button">下载封面</button>
+                <button id="copyCaptionBtn" type="button">复制文案</button>
+                <button id="downloadReportBtn" type="button">下载 HTML 报告</button>
+              </div>
             </div>
             <div id="trainingReportMetrics" class="training-report-metrics"></div>
             <p id="trainingReportNote"></p>
+            <div class="shot-map-wrap">
+              <div>
+                <strong>画面击球分布</strong>
+                <span>按拍摄画面位置显示，不代表真实场地坐标</span>
+              </div>
+              <canvas id="shotMap" width="640" height="300"></canvas>
+            </div>
           </section>
         </section>
 
@@ -176,6 +228,18 @@
           <div class="panel-head">
             <h2>AI 结果</h2>
             <div class="panel-actions">
+              <button id="undoEditBtn" disabled title="撤销">↶</button>
+              <button id="redoEditBtn" disabled title="重做">↷</button>
+              <button id="markCutStartBtn" disabled>标记删除起点</button>
+              <button id="finishCutBtn" disabled>删除到此处</button>
+              <select id="eventFilter" aria-label="筛选识别结果">
+                <option value="all">全部候选</option>
+                <option value="unreviewed">待确认</option>
+                <option value="confirmed">已确认</option>
+                <option value="favorite">已收藏</option>
+                <option value="ignored">已忽略</option>
+              </select>
+              <button id="confirmHighBtn" disabled>确认高分</button>
               <button id="addHitBtn" disabled>在此添加击球</button>
               <button id="restoreBtn" disabled>恢复全部</button>
             </div>

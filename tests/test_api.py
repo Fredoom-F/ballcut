@@ -41,6 +41,41 @@ def run():
     try:
         wait_for_server()
         payload = FIXTURE.read_bytes()
+
+        system_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        system_connection.request("GET", "/api/system")
+        system_response = system_connection.getresponse()
+        system_state = json.loads(system_response.read().decode("utf-8"))
+        assert system_response.status == 200
+        assert system_state["ready"] is True
+        assert system_state["opencv"]
+
+        cross_origin_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        cross_origin_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis",
+            body=b"not-a-video",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Length": "11",
+                "Origin": "https://example.com",
+            },
+        )
+        cross_origin_response = cross_origin_connection.getresponse()
+        assert cross_origin_response.status == 403
+        cross_origin_response.read()
+
+        wrong_type_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        wrong_type_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis",
+            body=b"not-a-video",
+            headers={"Content-Type": "text/plain", "Content-Length": "11"},
+        )
+        wrong_type_response = wrong_type_connection.getresponse()
+        assert wrong_type_response.status == 415
+        wrong_type_response.read()
+
         connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=120)
         connection.request(
             "POST",
@@ -135,6 +170,9 @@ def run():
                     "progress_samples": len(observed_progress),
                     "eta_samples": len(observed_eta),
                     "cancel_status": cancelled_status["status"],
+                    "cross_origin_status": cross_origin_response.status,
+                    "wrong_type_status": wrong_type_response.status,
+                    "opencv_version": system_state["opencv"],
                     "temporary_files": len(leftovers),
                 },
                 ensure_ascii=False,

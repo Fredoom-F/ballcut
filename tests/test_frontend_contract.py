@@ -52,6 +52,48 @@ def run():
     assert "sensitivity" in app_js
     assert "text/html;charset=utf-8" in app_js
     assert "剪球训练报告" in app_js
+    assert 'id="bestHighlightBtn"' in html
+    assert 'id="downloadCoverBtn"' in html
+    assert "downloadCover" in app_js
+    assert "getBestHighlight" in app_js
+    assert 'id="keepAudio"' in html
+    assert "getAudioTracks" in app_js
+    assert "activeJobStorageKey" in app_js
+    assert "resumeActiveAnalysis" in app_js
+    assert "X-Jianqiu-Cache-Key" in app_js
+    assert 'id="autoSlowMotion"' in html
+    assert "updatePreviewPlaybackRate" in app_js
+    assert 'id="copyCaptionBtn"' in html
+    assert "buildSocialCaption" in app_js
+    assert "copySocialCaption" in app_js
+    assert 'id="eventFilter"' in html
+    assert 'id="confirmHighBtn"' in html
+    assert "confirmHighConfidenceEvents" in app_js
+    assert 'id="undoEditBtn"' in html
+    assert 'id="redoEditBtn"' in html
+    assert "undoEdit" in app_js
+    assert "redoEdit" in app_js
+    assert 'id="effectStyle"' in html
+    assert 'id="showTrajectory"' in html
+    assert 'id="showImpact"' in html
+    assert "getEffectSettings" in app_js
+    assert 'id="importProjectBtn"' in html
+    assert 'id="projectInput"' in html
+    assert "importProjectFile" in app_js
+    assert 'id="shotMap"' in html
+    assert "renderShotMap" in app_js
+    assert "locateShotMapEvent" in app_js
+    assert 'id="analysisPreset"' in html
+    assert "analysisPreset" in app_js
+    assert 'id="markCutStartBtn"' in html
+    assert 'id="finishCutBtn"' in html
+    assert "finishManualCut" in app_js
+    assert "rebuildSegmentsFromCuts" in app_js
+    assert "shotType" in app_js
+    assert "getShotTypeLabel" in app_js
+    assert "教练备注" in app_js
+    assert "checkLocalAnalyzerEnvironment" in app_js
+    assert "/api/system" in app_js
     print("Frontend timeline playhead contract passed.")
 
 

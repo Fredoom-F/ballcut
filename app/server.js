@@ -3,13 +3,15 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
 const maxUploadBytes = 1024 * 1024 * 1024;
+const maxConcurrentJobs = 2;
 const jobs = new Map();
+const analyzerEnvironment = inspectAnalyzerEnvironment();
 const types = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -30,12 +32,27 @@ function safePath(urlPath) {
 const server = http.createServer((req, res) => {
     const requestUrl = new URL(req.url || "/", `http://127.0.0.1:${port}`);
 
+    if (requestUrl.pathname.startsWith("/api/") && !isTrustedLocalRequest(req)) {
+      sendJson(res, 403, { error: "拒绝来自其他网页的本地分析请求" });
+      return;
+    }
+
     if (req.url === "/health") {
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store"
       });
-      res.end(JSON.stringify({ status: "ok", service: "jianqiu", port }));
+      res.end(JSON.stringify({
+        status: "ok",
+        service: "jianqiu",
+        port,
+        analyzerReady: analyzerEnvironment.ready
+      }));
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/system" && req.method === "GET") {
+      sendJson(res, 200, analyzerEnvironment);
       return;
     }
 
@@ -93,9 +110,11 @@ function validateAnalyzeOptions(requestUrl) {
   const sport = requestUrl.searchParams.get("sport") || "tennis";
   const strength = Math.max(1, Math.min(3, Number(requestUrl.searchParams.get("strength") || 2)));
   const sensitivity = Math.max(1, Math.min(3, Number(requestUrl.searchParams.get("sensitivity") || 2)));
+  const preset = requestUrl.searchParams.get("preset") || "standard";
   const ballValue = requestUrl.searchParams.get("ball");
   const allowedSports = new Set(["tennis", "badminton", "tabletennis", "basketball", "football", "golf"]);
   if (!allowedSports.has(sport)) return null;
+  if (!new Set(["fast", "standard", "precise"]).has(preset)) return null;
   let ballColor = null;
   if (ballValue) {
     const channels = ballValue.split(",").map(Number);
@@ -104,10 +123,73 @@ function validateAnalyzeOptions(requestUrl) {
     }
     ballColor = channels;
   }
-  return { sport, strength, sensitivity, ballColor };
+  return { sport, strength, sensitivity, preset, ballColor };
+}
+
+function inspectAnalyzerEnvironment() {
+  const check = spawnSync(
+    "python",
+    [
+      "-c",
+      "import json,sys,cv2,numpy; print(json.dumps({'python':sys.version.split()[0],'opencv':cv2.__version__,'numpy':numpy.__version__}))"
+    ],
+    {
+      cwd: projectRoot,
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 10000
+    }
+  );
+  if (check.status === 0) {
+    try {
+      return { ready: true, ...JSON.parse(check.stdout.trim()) };
+    } catch {
+      return { ready: false, error: "无法读取 OpenCV 环境版本" };
+    }
+  }
+  return {
+    ready: false,
+    error: (check.stderr || check.error?.message || "Python/OpenCV 环境不可用").trim(),
+    installCommand: "python -m pip install opencv-python numpy"
+  };
+}
+
+function isTrustedLocalRequest(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
+}
+
+function validateUploadRequest(req, res) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (!contentType.startsWith("application/octet-stream")) {
+    sendJson(res, 415, { error: "分析接口只接受视频二进制数据" });
+    return false;
+  }
+  const declaredLength = Number(req.headers["content-length"] || 0);
+  if (declaredLength > maxUploadBytes) {
+    sendJson(res, 413, { error: "视频超过 1GB 本地分析限制" });
+    return false;
+  }
+  return true;
 }
 
 function startAnalyzeJob(req, res, requestUrl) {
+  if (!analyzerEnvironment.ready) {
+    sendJson(res, 503, {
+      error: "本地 OpenCV 环境不可用",
+      installCommand: analyzerEnvironment.installCommand
+    });
+    return;
+  }
+  if (!validateUploadRequest(req, res)) return;
+  const activeJobs = [...jobs.values()].filter((job) =>
+    ["analyzing", "finalizing"].includes(job.status)
+  ).length;
+  if (activeJobs >= maxConcurrentJobs) {
+    sendJson(res, 429, { error: "已有多个分析任务正在运行，请稍后再试" });
+    return;
+  }
   const options = validateAnalyzeOptions(requestUrl);
   if (!options) {
     sendJson(res, 400, { error: "不支持的运动类型" });
@@ -126,6 +208,8 @@ function startAnalyzeJob(req, res, requestUrl) {
       processedSeconds: 0,
       totalSeconds: null,
       uploadBytes: received,
+      fileName: decodeHeaderValue(req.headers["x-jianqiu-file-name"]),
+      cacheKey: decodeHeaderValue(req.headers["x-jianqiu-cache-key"]),
       createdAt: Date.now(),
       updatedAt: Date.now(),
       tempPath,
@@ -139,6 +223,7 @@ function startAnalyzeJob(req, res, requestUrl) {
       options.sport,
       options.strength,
       options.sensitivity,
+      options.preset,
       options.ballColor,
       (progress) => {
       Object.assign(job, progress, {
@@ -226,10 +311,20 @@ function publicJobState(job) {
     processedSeconds: job.processedSeconds,
     totalSeconds: job.totalSeconds,
     uploadBytes: job.uploadBytes,
+    fileName: job.fileName,
     elapsedSeconds: job.elapsedSeconds || 0,
     error: job.error,
     updatedAt: job.updatedAt
   };
+}
+
+function decodeHeaderValue(value) {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(String(value));
+  } catch {
+    return "";
+  }
 }
 
 function receiveUpload(req, res, onComplete) {
@@ -274,6 +369,14 @@ function receiveUpload(req, res, onComplete) {
 }
 
 function analyzeRequest(req, res) {
+  if (!analyzerEnvironment.ready) {
+    sendJson(res, 503, {
+      error: "本地 OpenCV 环境不可用",
+      installCommand: analyzerEnvironment.installCommand
+    });
+    return;
+  }
+  if (!validateUploadRequest(req, res)) return;
   const requestUrl = new URL(req.url, `http://127.0.0.1:${port}`);
   const options = validateAnalyzeOptions(requestUrl);
   if (!options) {
@@ -288,6 +391,7 @@ function analyzeRequest(req, res) {
         options.sport,
         options.strength,
         options.sensitivity,
+        options.preset,
         options.ballColor
       );
       const result = await analyzer.promise;
@@ -300,10 +404,11 @@ function analyzeRequest(req, res) {
   });
 }
 
-function runAnalyzer(videoPath, sport, strength, sensitivity, ballColor, onProgress, reportProgress = false) {
+function runAnalyzer(videoPath, sport, strength, sensitivity, preset, ballColor, onProgress, reportProgress = false) {
   const script = path.join(projectRoot, "analyzer", "analyze_video.py");
   const args = [script, videoPath, "--sport", sport, "--strength", String(strength)];
   args.push("--sensitivity", String(sensitivity));
+  args.push("--preset", preset);
   if (ballColor) args.push("--ball-rgb", ballColor.join(","));
   if (reportProgress) args.push("--progress");
   const child = spawn(
@@ -376,3 +481,9 @@ server.listen(port, "127.0.0.1", () => {
   console.log(`剪球本地版已启动：http://127.0.0.1:${port}/`);
   console.log("请保持此窗口开启。关闭窗口会停止本地服务。");
 });
+
+for (const file of fs.readdirSync(os.tmpdir())) {
+  if (file.startsWith("jianqiu-") && file.endsWith(".video")) {
+    fs.rm(path.join(os.tmpdir(), file), { force: true }, () => {});
+  }
+}

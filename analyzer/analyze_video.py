@@ -404,6 +404,7 @@ def analyze_video(
     progress_callback=None,
     ball_rgb=None,
     sensitivity=2,
+    preset="standard",
 ):
     base_config = SPORT_CONFIG.get(sport, SPORT_CONFIG["tennis"])
     config = {**base_config, "ranges": list(base_config["ranges"])}
@@ -420,7 +421,8 @@ def analyze_video(
         raise RuntimeError("无法读取视频时长")
     duration = min(duration, max_seconds)
 
-    sample_fps = min(12.0, max(5.0, source_fps))
+    target_sample_fps = {"fast": 8.0, "standard": 12.0, "precise": 15.0}.get(preset, 12.0)
+    sample_fps = min(target_sample_fps, max(5.0, source_fps))
     frame_step = max(1, round(source_fps / sample_fps))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 1)
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1)
@@ -595,6 +597,7 @@ def analyze_video(
     return {
         "version": 2,
         "analysisType": "opencv-local",
+        "analysisPreset": preset,
         "sport": sport,
         "sportName": config["name"],
         "duration": round(duration, 3),
@@ -627,6 +630,7 @@ def analyze_video(
             "highlight": "置信度不低于 0.58 的疑似击球事件前后片段",
             "ballColor": f"用户校准 RGB{tuple(ball_rgb)}" if ball_rgb else "运动默认颜色范围",
             "sensitivity": {1: "保守", 2: "标准", 3: "灵敏"}.get(sensitivity, "标准"),
+            "preset": {"fast": "快速预筛", "standard": "标准", "precise": "精细追踪"}.get(preset, "标准"),
         },
     }
 
@@ -646,6 +650,7 @@ def main():
     parser.add_argument("--progress", action="store_true")
     parser.add_argument("--ball-rgb")
     parser.add_argument("--sensitivity", type=int, default=2)
+    parser.add_argument("--preset", choices=["fast", "standard", "precise"], default="standard")
     args = parser.parse_args()
     callback = emit_progress if args.progress else None
     ball_rgb = None
@@ -661,6 +666,7 @@ def main():
         progress_callback=callback,
         ball_rgb=ball_rgb,
         sensitivity=max(1, min(3, args.sensitivity)),
+        preset=args.preset,
     )
     payload = json.dumps(result, ensure_ascii=False)
     if args.output:

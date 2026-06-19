@@ -88,6 +88,22 @@ def run():
     assert len(calibrated_result["trajectory"]) >= 70
     assert calibrated_matches >= 4
 
+    preset_metrics = {}
+    for preset in ["fast", "precise"]:
+        preset_result = analyze_video(fixture, "tennis", strength=3, preset=preset)
+        preset_times = [event["timestamp"] for event in preset_result["events"]]
+        preset_matches = sum(nearest_error(preset_times, expected) <= 0.65 for expected in HIT_TIMES)
+        preset_metrics[preset] = {
+            "sample_fps": preset_result["source"]["sampleFps"],
+            "events": preset_times,
+            "matched_hits": preset_matches,
+        }
+        if preset == "fast":
+            assert preset_matches >= 3
+        else:
+            assert preset_matches >= 4
+    print(json.dumps({"analysis_presets": preset_metrics}, ensure_ascii=False, indent=2))
+
 
 if __name__ == "__main__":
     run()
