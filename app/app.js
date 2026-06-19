@@ -717,7 +717,8 @@ function applyAnalysisResult(result) {
   }));
   state.segments = (result.segments || []).map((segment) => ({
     ...segment,
-    restored: false
+    restored: false,
+    reviewStatus: segment.type === "remove" ? "unreviewed" : "not_applicable"
   }));
   state.highlights = result.highlights || [];
   state.trajectory = result.trajectory || [];
@@ -1080,6 +1081,21 @@ function getReviewStats() {
   };
 }
 
+function getCutReviewStats() {
+  if (state.restored) return { reviewed: 0, total: 0, remaining: 0 };
+  const cuts = state.segments.filter((segment) => segment.type === "remove");
+  const reviewed = cuts.filter((segment) =>
+    segment.restored ||
+    segment.reviewStatus === "confirmed" ||
+    segment.reviewStatus === "rejected"
+  ).length;
+  return {
+    reviewed,
+    total: cuts.length,
+    remaining: Math.max(0, cuts.length - reviewed)
+  };
+}
+
 function getUnreviewedEvents() {
   return state.events
     .filter((event) => event.reviewStatus === "unreviewed" && event.source !== "manual")
@@ -1219,6 +1235,7 @@ function buildTrainingSummary() {
   ).length;
   const reviewRate = state.events.length ? reviewed / state.events.length : 0;
   const candidateReview = buildCandidateReviewMetrics(state.events);
+  const cutReview = getCutReviewStats();
   const keptRatio = state.duration ? (state.duration - getRemovedDuration()) / state.duration : 0;
   const coverage = state.analysisQuality?.coverage || 0;
   const averageConfidence = events.length
@@ -1244,6 +1261,7 @@ function buildTrainingSummary() {
     keptRatio,
     reviewRate,
     candidateReview,
+    cutReview,
     trustScore,
     trustLabel,
     trajectoryCoverage: coverage,
@@ -1421,6 +1439,9 @@ function buildDataInsights(summary) {
   if (summary.reviewRate < 1) {
     insights.push(["可信度", `仍有 ${Math.max(0, state.events.length - Math.round(summary.reviewRate * state.events.length))} 个候选未复核，数据提示会随确认或忽略实时变化。`]);
   }
+  if (summary.cutReview.remaining) {
+    insights.push(["等待片段", `仍有 ${summary.cutReview.remaining} 段自动删除建议未复核；确认删除或恢复后再导出更稳妥。`]);
+  }
   if (summary.candidateReview.reviewed >= 3) {
     insights.push([
       "候选命中率",
@@ -1517,10 +1538,13 @@ function renderExportReadiness() {
     ).length
     : 0;
   const review = getReviewStats();
+  const cutReview = getCutReviewStats();
   const readiness = buildExportReadiness({
     analysisReady: Boolean(state.analysisQuality),
     totalCandidates: review.total,
     reviewedCandidates: review.reviewed,
+    cutSegments: cutReview.total,
+    reviewedCutSegments: cutReview.reviewed,
     segmentCount: segments.length,
     outputSeconds: sourceDuration + slowMotionEvents,
     trajectoryCoverage: Number(state.analysisQuality?.coverage) || 0,
@@ -2054,16 +2078,33 @@ function renderCuts() {
 
   cuts.forEach((segment) => {
     const card = document.createElement("div");
-    card.className = `cut-card ${segment.restored ? "restored" : ""}`;
+    card.className = `cut-card ${segment.restored ? "restored" : ""} ${segment.reviewStatus || ""}`;
+    const status = segment.restored || segment.reviewStatus === "rejected"
+      ? "已恢复保留"
+      : segment.reviewStatus === "confirmed"
+        ? "已确认删除"
+        : "待复核";
     card.innerHTML = `
       <div>
-        <strong>${segment.restored ? "已恢复" : "建议删除"}</strong>
+        <strong>${status}</strong>
         <span>${formatTime(segment.start)}–${formatTime(segment.end)} · ${escapeAttribute(segment.reason)}</span>
       </div>
-      <button type="button">${segment.restored ? "重新删除" : "恢复"}</button>
+      <div class="cut-actions">
+        <button type="button" data-action="confirm">${segment.reviewStatus === "confirmed" ? "取消确认" : "确认删除"}</button>
+        <button type="button" data-action="restore">${segment.restored ? "重新删除" : "恢复保留"}</button>
+      </div>
     `;
-    card.querySelector("button").addEventListener("click", () => {
-      segment.restored = !segment.restored;
+    card.querySelector(".cut-actions").addEventListener("click", (event) => {
+      const action = event.target.dataset.action;
+      if (!action) return;
+      if (action === "confirm") {
+        segment.restored = false;
+        segment.reviewStatus = segment.reviewStatus === "confirmed" ? "unreviewed" : "confirmed";
+      }
+      if (action === "restore") {
+        segment.restored = !segment.restored;
+        segment.reviewStatus = segment.restored ? "rejected" : "unreviewed";
+      }
       pushEditHistory();
       scheduleProjectPersist();
       renderAll();
@@ -2100,7 +2141,8 @@ function rebuildSegmentsFromCuts(cutRanges) {
         start: cursor,
         end: safeStart,
         type: "keep",
-        restored: false
+        restored: false,
+        reviewStatus: "not_applicable"
       });
     }
     segments.push({
@@ -2109,7 +2151,8 @@ function rebuildSegmentsFromCuts(cutRanges) {
       end: safeEnd,
       type: "remove",
       reason: "用户手动删除",
-      restored: false
+      restored: false,
+      reviewStatus: "confirmed"
     });
     cursor = safeEnd;
   });
@@ -2119,7 +2162,8 @@ function rebuildSegmentsFromCuts(cutRanges) {
       start: cursor,
       end: state.duration,
       type: "keep",
-      restored: false
+      restored: false,
+      reviewStatus: "not_applicable"
     });
   }
   state.segments = segments;
@@ -2759,12 +2803,19 @@ async function importProjectFile(file) {
       source: event.source || "opencv",
       favorite: Boolean(event.favorite)
     }));
-    state.segments = payload.segments.map((segment) => ({
-      ...segment,
-      id: String(segment.id || `imported_segment_${segment.start}`),
-      reason: String(segment.reason || "导入片段").slice(0, 100),
-      restored: Boolean(segment.restored)
-    }));
+    state.segments = payload.segments.map((segment) => {
+      const requestedStatus = String(segment.reviewStatus || "");
+      const reviewStatus = ["confirmed", "rejected", "unreviewed"].includes(requestedStatus)
+        ? requestedStatus
+        : segment.restored ? "rejected" : "unreviewed";
+      return {
+        ...segment,
+        id: String(segment.id || `imported_segment_${segment.start}`),
+        reason: String(segment.reason || "导入片段").slice(0, 100),
+        restored: Boolean(segment.restored),
+        reviewStatus: segment.type === "remove" ? reviewStatus : "not_applicable"
+      };
+    });
     state.trajectory = payload.trajectory;
     state.analysisSource = payload.source || null;
     state.analysisCapabilities = payload.capabilities || null;

@@ -12,6 +12,11 @@
     const segmentCount = Math.max(0, Number(options.segmentCount) || 0);
     const outputSeconds = Math.max(0, Number(options.outputSeconds) || 0);
     const trajectoryCoverage = Math.max(0, Number(options.trajectoryCoverage) || 0);
+    const cutSegments = Math.max(0, Number(options.cutSegments) || 0);
+    const reviewedCutSegments = Math.min(
+      cutSegments,
+      Math.max(0, Number(options.reviewedCutSegments) || 0)
+    );
     const items = [];
 
     items.push(options.analysisReady
@@ -37,6 +42,22 @@
           level: "warning",
           label: "候选复核",
           detail: `仍有 ${remaining} / ${totalCandidates} 个候选未复核`
+        });
+
+    items.push(cutSegments === 0
+      ? { key: "cuts", level: "ready", label: "等待片段", detail: "当前没有待删除片段" }
+      : reviewedCutSegments === cutSegments
+        ? {
+          key: "cuts",
+          level: "ready",
+          label: "等待片段",
+          detail: `${cutSegments} 段已全部确认或恢复`
+        }
+        : {
+          key: "cuts",
+          level: "warning",
+          label: "等待片段",
+          detail: `仍有 ${cutSegments - reviewedCutSegments} / ${cutSegments} 段未复核`
         });
 
     items.push(trajectoryCoverage >= 0.15

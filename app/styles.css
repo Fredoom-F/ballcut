@@ -1214,6 +1214,21 @@ video,
   opacity: 0.55;
 }
 
+.cut-card.confirmed {
+  border-top-color: rgba(109, 217, 181, 0.45);
+}
+
+.cut-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cut-actions button {
+  min-height: 34px;
+  padding: 0 9px;
+}
+
 .cut-card span {
   display: block;
   color: var(--muted);

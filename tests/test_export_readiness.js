@@ -8,6 +8,8 @@ const ready = buildExportReadiness({
   segmentCount: 3,
   outputSeconds: 28,
   trajectoryCoverage: 0.42,
+  cutSegments: 2,
+  reviewedCutSegments: 2,
   mediaRecorderSupported: true,
   audioRequested: true,
   audioSupported: true
@@ -23,14 +25,17 @@ const warning = buildExportReadiness({
   segmentCount: 2,
   outputSeconds: 15,
   trajectoryCoverage: 0.08,
+  cutSegments: 3,
+  reviewedCutSegments: 1,
   mediaRecorderSupported: true,
   audioRequested: true,
   audioSupported: false
 });
 assert.strictEqual(warning.level, "warning");
 assert.strictEqual(warning.errors, 0);
-assert.ok(warning.warnings >= 3);
+assert.ok(warning.warnings >= 4);
 assert.ok(warning.items.some((item) => item.detail.includes("5 / 8")));
+assert.ok(warning.items.some((item) => item.detail.includes("2 / 3")));
 
 const blocked = buildExportReadiness({
   analysisReady: false,
