@@ -103,6 +103,11 @@
             <span>显示击球爆点</span>
           </label>
 
+          <label class="toggle">
+            <input id="showActivityRegion" type="checkbox" />
+            <span>显示人体活动区域代理</span>
+          </label>
+
           <label>
             自动删除强度
             <input id="cutStrength" type="range" min="1" max="3" value="2" />
@@ -204,6 +209,17 @@
           </div>
 
           <div class="timeline-wrap">
+            <div class="timeline-controls">
+              <label>
+                时间线范围
+                <select id="timelineZoom" aria-label="时间线显示范围">
+                  <option value="0">全片</option>
+                  <option value="30">30 秒</option>
+                  <option value="10">10 秒</option>
+                </select>
+              </label>
+              <span id="timelineRangeLabel">全片</span>
+            </div>
             <div id="timeline" class="timeline" aria-label="视频时间线"></div>
             <div class="legend">
               <span><i class="keep"></i>保留</span>
@@ -251,12 +267,23 @@
             </div>
             <div id="trainingReportMetrics" class="training-report-metrics"></div>
             <p id="trainingReportNote"></p>
+            <div class="data-insights-wrap">
+              <strong>数据提示</strong>
+              <div id="dataInsights"></div>
+            </div>
             <div id="capabilityDisclosure" class="capability-disclosure" hidden>
               <div>
                 <strong>本次识别能力</strong>
                 <span>明确区分已运行的判据与尚未加载的模型</span>
               </div>
               <div id="capabilityList"></div>
+            </div>
+            <div class="export-plan-wrap">
+              <div>
+                <strong>导出计划</strong>
+                <span id="exportPlanSummary">完成分析后生成</span>
+              </div>
+              <div id="exportPlanList"></div>
             </div>
             <div class="shot-map-wrap">
               <div>

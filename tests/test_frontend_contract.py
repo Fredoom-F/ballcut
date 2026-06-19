@@ -13,7 +13,8 @@ def run():
     assert "updatePlaybackProgress" in app_js
     assert '$("timeline").addEventListener("click"' in app_js
     assert ".timeline-playhead" in styles
-    assert "video.currentTime / state.duration" in app_js
+    assert "video.currentTime - viewport.start" in app_js
+    assert "viewport.end - viewport.start" in app_js
     assert "analysisProgressBar" in app_js
     assert "formatRemaining" in app_js
     assert "uploadAnalysisJob" in app_js
@@ -166,6 +167,26 @@ def run():
     assert "preferenceStorageKey" in app_js
     assert "saveEditorPreferences" in app_js
     assert "loadEditorPreferences" in app_js
+    assert 'id="exportPlanSummary"' in html
+    assert 'id="exportPlanList"' in html
+    assert "renderExportPlan" in app_js
+    assert ".export-plan-row" in styles
+    assert "excludedExportKeys" in app_js
+    assert "exportSegmentKey" in app_js
+    assert "getRawExportSegments" in app_js
+    assert 'id="dataInsights"' in html
+    assert "buildDataInsights" in app_js
+    assert "renderDataInsights" in app_js
+    assert ".data-insight" in styles
+    assert "formatEtaWithClock" in app_js
+    assert "约 ${clock} 完成" in app_js
+    assert 'id="showActivityRegion"' in html
+    assert "activityRegion" in app_js
+    assert "活动区域代理" in app_js
+    assert 'id="timelineZoom"' in html
+    assert 'id="timelineRangeLabel"' in html
+    assert "getTimelineViewport" in app_js
+    assert "centerTimelineOn" in app_js
     print("Frontend timeline playhead contract passed.")
 
 

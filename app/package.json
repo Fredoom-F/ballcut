@@ -2,7 +2,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "python ../tests/run_all.py",
-    "test:real": "python ../tests/test_real_video.py"
+    "test:real": "python ../tests/test_real_video.py",
+    "test:real-progress": "python ../tests/test_real_progress.py"
   },
   "dependencies": {},
   "devDependencies": {}

@@ -27,7 +27,9 @@ const state = {
   exporting: false,
   selectedHistoryKey: "",
   previewReframe: { x: 0.5, y: 0.5 },
-  reviewLoop: null
+  reviewLoop: null,
+  excludedExportKeys: new Set(),
+  timelineViewportStart: 0
 };
 
 const sportProfiles = {
@@ -60,6 +62,7 @@ const preferenceControlIds = [
   "effectStyle",
   "showTrajectory",
   "showImpact",
+  "showActivityRegion",
   "cutStrength",
   "highlightThreshold",
   "hitSensitivity",
@@ -68,7 +71,8 @@ const preferenceControlIds = [
   "keepAudio",
   "autoSlowMotion",
   "smartSkip",
-  "reviewPlaybackRate"
+  "reviewPlaybackRate",
+  "timelineZoom"
 ];
 
 function formatTime(seconds) {
@@ -161,6 +165,17 @@ function formatRemaining(seconds) {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.ceil(seconds % 60);
   return `预计剩余 ${minutes} 分 ${remainder} 秒`;
+}
+
+function formatEtaWithClock(seconds) {
+  const remaining = formatRemaining(seconds);
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return remaining;
+  const finish = new Date(Date.now() + seconds * 1000);
+  const clock = finish.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  return `${remaining} · 约 ${clock} 完成`;
 }
 
 function formatBytesPerSecond(bytesPerSecond) {
@@ -483,7 +498,8 @@ function snapshotProjectEdits() {
     segments: state.segments.map((segment) => ({
       ...segment
     })),
-    restored: state.restored
+    restored: state.restored,
+    excludedExportKeys: [...state.excludedExportKeys]
   };
 }
 
@@ -551,6 +567,9 @@ function applyProjectEdits(edits) {
     }));
   }
   state.restored = Boolean(edits.restored);
+  state.excludedExportKeys = new Set(
+    Array.isArray(edits.excludedExportKeys) ? edits.excludedExportKeys.map(String) : []
+  );
   $("restoreBtn").textContent = state.restored ? "重新删除" : "恢复全部";
   state.events.sort((a, b) => a.timestamp - b.timestamp);
   rebuildHighlights();
@@ -569,6 +588,7 @@ function applyAnalysisResult(result) {
   state.duration = result.duration || state.duration;
   state.analysisSource = result.source || null;
   state.analysisCapabilities = result.capabilities || null;
+  state.excludedExportKeys = new Set();
   state.events = (result.events || []).map((event) => ({
     ...event,
     reviewStatus: "unreviewed",
@@ -615,6 +635,8 @@ function selectFile(file) {
   state.pendingCutStart = null;
   state.positionEventId = null;
   state.reviewLoop = null;
+  state.excludedExportKeys = new Set();
+  state.timelineViewportStart = 0;
   $("previousEventBtn").disabled = true;
   $("nextEventBtn").disabled = true;
   $("calibrateBallBtn").disabled = false;
@@ -656,7 +678,7 @@ async function generateAnalysis() {
   showAnalysisProgress({
     phase: "正在上传到本机分析器",
     percent: 0,
-    eta: formatRemaining(getEstimatedAnalysisSeconds(state.duration, preset)),
+    eta: formatEtaWithClock(getEstimatedAnalysisSeconds(state.duration, preset)),
     speed: ""
   });
   setLog([
@@ -769,7 +791,7 @@ function uploadAnalysisJob(file, sport, strength, sensitivity, preset, ballColor
       showAnalysisProgress({
         phase: "正在传入本机分析器",
         percent: uploadProgress * 0.12,
-        eta: formatRemaining(eta),
+        eta: formatEtaWithClock(eta),
         speed: formatBytesPerSecond(smoothedSpeed)
       });
       lastLoaded = event.loaded;
@@ -851,7 +873,7 @@ async function waitForAnalysisResult(jobId) {
     showAnalysisProgress({
       phase,
       percent: overallProgress,
-      eta: formatRemaining(job.etaSeconds),
+      eta: formatEtaWithClock(job.etaSeconds),
       speed: job.processingFps ? `${job.processingFps.toFixed(1)} 帧/s` : ""
     });
 
@@ -940,6 +962,7 @@ function navigateNextUnreviewed() {
   }
   const next = candidates.find((event) => event.timestamp > video.currentTime + 0.15) || candidates[0];
   setReviewLoop(next);
+  centerTimelineOn(next.timestamp);
   video.currentTime = next.timestamp;
   video.pause();
   updatePlaybackProgress();
@@ -1037,6 +1060,14 @@ function buildTrainingSummary() {
   const averageInterval = intervals.length
     ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length
     : null;
+  const intervalDeviation = intervals.length && averageInterval
+    ? Math.sqrt(
+      intervals.reduce((sum, value) => sum + (value - averageInterval) ** 2, 0) / intervals.length
+    )
+    : null;
+  const intervalConsistency = intervalDeviation == null || !averageInterval
+    ? null
+    : clamp(1 - intervalDeviation / averageInterval, 0, 1);
   let longestSequence = events.length ? 1 : 0;
   let currentSequence = events.length ? 1 : 0;
   intervals.forEach((interval) => {
@@ -1073,6 +1104,8 @@ function buildTrainingSummary() {
     duration: state.duration,
     activeEvents: events.length,
     averageInterval,
+    intervalDeviation,
+    intervalConsistency,
     longestSequence,
     fastestSpeed,
     keptRatio,
@@ -1150,10 +1183,112 @@ function renderTrainingReport() {
     .map(([type, count]) => `${getShotTypeLabel(type)} ${count}`)
     .join("，");
   if (classified) $("trainingReportNote").textContent += ` 动作分布：${classified}。`;
+  renderDataInsights(summary);
   renderShotMap();
   renderCapabilityDisclosure();
+  renderExportPlan();
   renderTrainingHistory();
   renderRallies();
+}
+
+function buildDataInsights(summary) {
+  const insights = [];
+  if (summary.activeEvents < 4) {
+    insights.push(["样本量", "当前有效候选较少，暂不适合判断动作趋势，建议先完成复核或增加训练时长。"]);
+  } else if (summary.intervalConsistency != null) {
+    insights.push([
+      "击球节奏",
+      summary.intervalConsistency >= 0.72
+        ? "本次击球间隔相对稳定，可结合回合列表定位连续性较好的片段。"
+        : "本次击球间隔波动较大，可能包含发球准备、捡球或不同训练内容，建议分段比较。"
+    ]);
+  }
+  insights.push([
+    "有效运动",
+    summary.keptRatio >= 0.65
+      ? "视频中有效运动占比较高，适合直接生成训练记录。"
+      : "等待和镜头中断占比较高，导出前建议逐段检查自动删除区间。"
+  ]);
+  if (summary.longestSequence >= 4) {
+    insights.push(["连续性", `最长连续识别到 ${summary.longestSequence} 次击球，可优先复看对应回合。`]);
+  }
+  if (summary.reviewRate < 1) {
+    insights.push(["可信度", `仍有 ${Math.max(0, state.events.length - Math.round(summary.reviewRate * state.events.length))} 个候选未复核，数据提示会随确认或忽略实时变化。`]);
+  }
+  const classified = Object.entries(summary.shotTypes)
+    .filter(([type]) => type !== "unclassified")
+    .reduce((sum, [, count]) => sum + count, 0);
+  if (summary.activeEvents && classified / summary.activeEvents < 0.5) {
+    insights.push(["动作标签", "超过一半击球尚未分类；补充正手、反手、发球等标签后，训练历史更适合横向比较。"]);
+  }
+  return insights;
+}
+
+function renderDataInsights(summary) {
+  $("dataInsights").innerHTML = buildDataInsights(summary)
+    .map(([label, message]) => `
+      <div class="data-insight">
+        <span>${label}</span>
+        <p>${escapeAttribute(message)}</p>
+      </div>
+    `)
+    .join("");
+}
+
+function renderExportPlan() {
+  const list = $("exportPlanList");
+  const rawSegments = getRawExportSegments();
+  const segments = rawSegments.filter((segment) =>
+    !state.excludedExportKeys.has(exportSegmentKey(segment))
+  );
+  if (!rawSegments.length) {
+    $("exportPlanSummary").textContent = "当前设置没有可导出片段";
+    list.innerHTML = "<span>请调整精彩阈值、集锦时长或恢复需要保留的片段。</span>";
+    return;
+  }
+  const sourceDuration = segments.reduce((sum, segment) => sum + segment.end - segment.start, 0);
+  const slowMotionEvents = $("autoSlowMotion").checked
+    ? getActiveEvents().filter((event) =>
+      segments.some((segment) => event.timestamp >= segment.start && event.timestamp <= segment.end)
+    ).length
+    : 0;
+  const estimatedOutputDuration = sourceDuration + slowMotionEvents;
+  const modeLabel = {
+    balanced: "综合剪辑",
+    cutIdle: "删除等待",
+    highlights: "精彩集锦",
+    effects: "击球特效"
+  }[$("modeSelect").value] || "当前模式";
+  $("exportPlanSummary").textContent =
+    `${modeLabel} · 已选 ${segments.length} / ${rawSegments.length} 段 · 原速 ${formatTime(sourceDuration)}` +
+    (slowMotionEvents ? ` · 慢放后约 ${formatTime(estimatedOutputDuration)}` : "");
+  list.innerHTML = "";
+  rawSegments.slice(0, 20).forEach((segment, index) => {
+    const key = exportSegmentKey(segment);
+    const included = !state.excludedExportKeys.has(key);
+    const row = document.createElement("div");
+    row.className = "export-plan-row";
+    row.innerHTML = `
+      <input type="checkbox" aria-label="包含片段 ${index + 1}" ${included ? "checked" : ""} />
+      <strong>${String(index + 1).padStart(2, "0")}</strong>
+      <span>${formatTime(segment.start)}–${formatTime(segment.end)}</span>
+      <span>${formatTime(segment.end - segment.start)}</span>
+      <button type="button">播放</button>
+    `;
+    row.querySelector("input").addEventListener("change", (event) => {
+      if (event.target.checked) state.excludedExportKeys.delete(key);
+      else state.excludedExportKeys.add(key);
+      pushEditHistory();
+      scheduleProjectPersist();
+      renderExportPlan();
+    });
+    row.querySelector("button").addEventListener("click", () => {
+      state.reviewLoop = null;
+      video.currentTime = segment.start;
+      video.play();
+    });
+    list.appendChild(row);
+  });
 }
 
 function renderCapabilityDisclosure() {
@@ -1436,33 +1571,46 @@ function renderTimeline() {
   const timeline = $("timeline");
   timeline.innerHTML = "";
   if (!state.duration) return;
+  const viewport = getTimelineViewport();
+  const viewportDuration = viewport.end - viewport.start;
+  const leftPercent = (time) => ((time - viewport.start) / viewportDuration) * 100;
+  $("timelineRangeLabel").textContent = viewportDuration >= state.duration - 0.05
+    ? "全片"
+    : `${formatTime(viewport.start)}–${formatTime(viewport.end)}`;
 
   const fragment = document.createDocumentFragment();
   state.segments.forEach((segment) => {
+    const visibleStart = Math.max(segment.start, viewport.start);
+    const visibleEnd = Math.min(segment.end, viewport.end);
+    if (visibleEnd <= visibleStart) return;
     const div = document.createElement("button");
     div.type = "button";
     const segmentClass = segment.type === "remove" && segment.reason?.includes("镜头移动")
       ? "camera"
       : segment.type;
     div.className = `segment ${(state.restored || segment.restored) && segment.type === "remove" ? "keep" : segmentClass}`;
-    div.style.left = `${(segment.start / state.duration) * 100}%`;
-    div.style.width = `${Math.max(0.35, ((segment.end - segment.start) / state.duration) * 100)}%`;
+    div.style.left = `${leftPercent(visibleStart)}%`;
+    div.style.width = `${Math.max(0.35, ((visibleEnd - visibleStart) / viewportDuration) * 100)}%`;
     div.title = `${segment.type === "remove" ? segment.reason : "保留片段"} ${formatTime(segment.start)}-${formatTime(segment.end)}`;
     fragment.appendChild(div);
   });
 
   getSelectedHighlights().forEach((highlight) => {
+    const visibleStart = Math.max(highlight.start, viewport.start);
+    const visibleEnd = Math.min(highlight.end, viewport.end);
+    if (visibleEnd <= visibleStart) return;
     const div = document.createElement("div");
     div.className = "segment highlight";
-    div.style.left = `${(highlight.start / state.duration) * 100}%`;
-    div.style.width = `${Math.max(0.4, ((highlight.end - highlight.start) / state.duration) * 100)}%`;
+    div.style.left = `${leftPercent(visibleStart)}%`;
+    div.style.width = `${Math.max(0.4, ((visibleEnd - visibleStart) / viewportDuration) * 100)}%`;
     fragment.appendChild(div);
   });
 
   getActiveEvents().forEach((event) => {
+    if (event.timestamp < viewport.start || event.timestamp > viewport.end) return;
     const marker = document.createElement("div");
     marker.className = "event-marker";
-    marker.style.left = `${(event.timestamp / state.duration) * 100}%`;
+    marker.style.left = `${leftPercent(event.timestamp)}%`;
     marker.title = `${event.label} ${formatTime(event.timestamp)}`;
     fragment.appendChild(marker);
   });
@@ -1470,10 +1618,33 @@ function renderTimeline() {
   const playhead = document.createElement("div");
   playhead.id = "timelinePlayhead";
   playhead.className = "timeline-playhead";
-  playhead.style.left = `${state.duration ? (video.currentTime / state.duration) * 100 : 0}%`;
+  playhead.style.left = `${clamp(leftPercent(video.currentTime), 0, 100)}%`;
   fragment.appendChild(playhead);
 
   timeline.appendChild(fragment);
+}
+
+function getTimelineViewport() {
+  const requested = Number($("timelineZoom").value) || 0;
+  if (!requested || requested >= state.duration) {
+    state.timelineViewportStart = 0;
+    return { start: 0, end: state.duration };
+  }
+  const maximumStart = Math.max(0, state.duration - requested);
+  state.timelineViewportStart = clamp(state.timelineViewportStart, 0, maximumStart);
+  return {
+    start: state.timelineViewportStart,
+    end: state.timelineViewportStart + requested
+  };
+}
+
+function centerTimelineOn(time) {
+  const requested = Number($("timelineZoom").value) || 0;
+  if (!requested || requested >= state.duration) {
+    state.timelineViewportStart = 0;
+    return;
+  }
+  state.timelineViewportStart = clamp(time - requested / 2, 0, state.duration - requested);
 }
 
 function renderEvents() {
@@ -1553,6 +1724,7 @@ function renderEvents() {
       if (!action) return;
       if (action === "locate") {
         setReviewLoop(event);
+        centerTimelineOn(event.timestamp);
         video.currentTime = event.timestamp;
         video.play();
         return;
@@ -1746,6 +1918,7 @@ function navigateEvent(direction) {
     ? events.find((event) => event.timestamp > current + 0.08) || events[0]
     : events.slice().reverse().find((event) => event.timestamp < current - 0.08) || events[events.length - 1];
   setReviewLoop(target);
+  centerTimelineOn(target.timestamp);
   video.currentTime = target.timestamp;
   updatePlaybackProgress();
 }
@@ -1911,6 +2084,25 @@ function drawEffects() {
   const settings = getEffectSettings(profile);
   const now = video.currentTime;
   const recent = state.events.filter((event) => Math.abs(event.timestamp - now) < 0.65 && event.position);
+  if ($("showActivityRegion").checked) recent.forEach((event) => {
+    const region = event.activityRegion;
+    if (!region) return;
+    const x = display.x + display.width * region.x;
+    const y = display.y + display.height * region.y;
+    const width = display.width * region.w;
+    const height = display.height * region.h;
+    ctx.save();
+    ctx.strokeStyle = "rgba(76,201,164,0.9)";
+    ctx.fillStyle = "rgba(76,201,164,0.12)";
+    ctx.lineWidth = Math.max(2, window.devicePixelRatio || 1);
+    ctx.setLineDash([8, 6]);
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = `${Math.max(11, 11 * (window.devicePixelRatio || 1))}px sans-serif`;
+    ctx.fillText("活动区域代理", x + 6, Math.max(14, y - 6));
+    ctx.restore();
+  });
   if ($("showImpact").checked) recent.forEach((event) => {
     const age = Math.abs(event.timestamp - now);
     const pulse = 1 - age / 0.65;
@@ -2052,7 +2244,15 @@ function updateReviewLoop() {
 }
 
 function updatePlaybackProgress() {
-  const progress = state.duration ? clamp(video.currentTime / state.duration, 0, 1) : 0;
+  let viewport = getTimelineViewport();
+  if (video.currentTime < viewport.start || video.currentTime > viewport.end) {
+    centerTimelineOn(video.currentTime);
+    renderTimeline();
+    viewport = getTimelineViewport();
+  }
+  const progress = viewport.end > viewport.start
+    ? clamp((video.currentTime - viewport.start) / (viewport.end - viewport.start), 0, 1)
+    : 0;
   const playhead = $("timelinePlayhead");
   if (playhead) playhead.style.left = `${progress * 100}%`;
   $("durationLabel").textContent = `${formatTime(video.currentTime)} / ${formatTime(state.duration)}`;
@@ -2074,6 +2274,7 @@ function makeDecisionPayload() {
     trajectory: state.trajectory,
     source: state.analysisSource,
     capabilities: state.analysisCapabilities,
+    excluded_export_segments: [...state.excludedExportKeys],
     analysis_quality: state.analysisQuality,
     training_summary: state.analysisQuality ? buildTrainingSummary() : null
   };
@@ -2137,6 +2338,8 @@ function downloadTrainingReport() {
   </div>
   <h2>拍摄质量</h2>
   <p>清晰度 ${Math.round(summary.medianSharpness)}，亮度 ${Math.round(summary.medianBrightness)}。${escapeHtml(summary.recommendations.join("；"))}</p>
+  <h2>数据提示</h2>
+  <ul>${buildDataInsights(summary).map(([label, message]) => `<li><strong>${escapeHtml(label)}：</strong>${escapeHtml(message)}</li>`).join("")}</ul>
   <h2>击球与关键动作</h2>
   <table><thead><tr><th>时间</th><th>类型</th><th>置信度</th><th>精彩分</th><th>审阅</th><th>证据</th></tr></thead><tbody>${eventRows || '<tr><td colspan="6">暂无事件</td></tr>'}</tbody></table>
   <h2>等待与冗余建议</h2>
@@ -2227,6 +2430,11 @@ async function importProjectFile(file) {
     state.trajectory = payload.trajectory;
     state.analysisSource = payload.source || null;
     state.analysisCapabilities = payload.capabilities || null;
+    state.excludedExportKeys = new Set(
+      Array.isArray(payload.excluded_export_segments)
+        ? payload.excluded_export_segments.map(String)
+        : []
+    );
     state.analysisQuality = payload.analysis_quality || {
       coverage: state.duration ? payload.trajectory.length / Math.max(1, state.duration * 12) : 0,
       recommendations: ["该结果来自导入项目，请按需要复核击球候选"]
@@ -2314,7 +2522,10 @@ function locateBestHighlight() {
   const highlight = getBestHighlight();
   if (!highlight) return;
   const event = state.events.find((candidate) => candidate.id === highlight.eventId);
-  if (event) setReviewLoop(event);
+  if (event) {
+    setReviewLoop(event);
+    centerTimelineOn(event.timestamp);
+  }
   video.currentTime = event?.timestamp ?? highlight.start;
   updatePlaybackProgress();
   video.play();
@@ -2881,7 +3092,11 @@ function mergeExportSegments(segments) {
   return mergeSegments(segments);
 }
 
-function getExportSegments() {
+function exportSegmentKey(segment) {
+  return `${Number(segment.start).toFixed(3)}-${Number(segment.end).toFixed(3)}`;
+}
+
+function getRawExportSegments() {
   if ($("modeSelect").value === "highlights") {
     const threshold = getHighlightThreshold();
     const candidates = [
@@ -2896,6 +3111,12 @@ function getExportSegments() {
     return selectByDuration(candidates, Number($("highlightDuration").value));
   }
   return getKeptSegments();
+}
+
+function getExportSegments() {
+  return getRawExportSegments().filter((segment) =>
+    !state.excludedExportKeys.has(exportSegmentKey(segment))
+  );
 }
 
 function getRecorderOptions(candidates) {
@@ -2983,6 +3204,44 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, reframeState, o
           outCtx.restore();
         });
 
+      if ($("showActivityRegion").checked) state.events
+        .filter((event) => event.activityRegion && Math.abs(event.timestamp - exportVideo.currentTime) < 0.6)
+        .forEach((event) => {
+          const topLeft = mapExportPoint(
+            { x: event.activityRegion.x, y: event.activityRegion.y },
+            render,
+            exportVideo,
+            out
+          );
+          const bottomRight = mapExportPoint(
+            {
+              x: event.activityRegion.x + event.activityRegion.w,
+              y: event.activityRegion.y + event.activityRegion.h
+            },
+            render,
+            exportVideo,
+            out
+          );
+          outCtx.save();
+          outCtx.strokeStyle = "rgba(76,201,164,0.9)";
+          outCtx.fillStyle = "rgba(76,201,164,0.12)";
+          outCtx.lineWidth = 3;
+          outCtx.setLineDash([10, 8]);
+          outCtx.fillRect(
+            topLeft.x,
+            topLeft.y,
+            bottomRight.x - topLeft.x,
+            bottomRight.y - topLeft.y
+          );
+          outCtx.strokeRect(
+            topLeft.x,
+            topLeft.y,
+            bottomRight.x - topLeft.x,
+            bottomRight.y - topLeft.y
+          );
+          outCtx.restore();
+        });
+
       outCtx.fillStyle = "rgba(0,0,0,.48)";
       outCtx.fillRect(out.width - 236, 22, 204, 42);
       outCtx.fillStyle = "rgba(255,255,255,.86)";
@@ -3027,7 +3286,10 @@ $("analysisPreset").addEventListener("change", () => {
 });
 $("modeSelect").addEventListener("change", () => {
   $("highlightDuration").disabled = $("modeSelect").value !== "highlights";
+  renderAll();
 });
+$("highlightDuration").addEventListener("change", renderAll);
+$("autoSlowMotion").addEventListener("change", renderAll);
 $("highlightDuration").disabled = $("modeSelect").value !== "highlights";
 $("ratioSelect").addEventListener("change", () => {
   state.previewReframe = { x: 0.5, y: 0.5 };
@@ -3109,8 +3371,15 @@ $("timeline").addEventListener("click", (event) => {
   state.reviewLoop = null;
   const rect = $("timeline").getBoundingClientRect();
   const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-  video.currentTime = ratio * state.duration;
+  const viewport = getTimelineViewport();
+  video.currentTime = viewport.start + ratio * (viewport.end - viewport.start);
   updatePlaybackProgress();
+});
+$("timelineZoom").addEventListener("change", () => {
+  centerTimelineOn(video.currentTime);
+  renderTimeline();
+  updatePlaybackProgress();
+  saveEditorPreferences();
 });
 window.addEventListener("resize", sizeCanvasToVideo);
 window.addEventListener("keydown", handleEditorShortcut);

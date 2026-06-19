@@ -175,6 +175,8 @@ def run():
         assert max(observed_progress) >= 0.9, observed_progress
         assert observed_eta, "analysis never reported an ETA"
         assert any(value > 0 for value in observed_eta), observed_eta
+        positive_eta = [value for value in observed_eta if value > 0]
+        assert positive_eta[-1] <= positive_eta[0] + 2, positive_eta
 
         result_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         result_connection.request("GET", f"/api/analyze/result?id={job_id}")

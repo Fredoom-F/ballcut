@@ -67,6 +67,7 @@ def run():
     assert matched >= 9, "real-video hit regression"
     assert len(actual_events) <= 10, "real-video false positives increased"
     assert len(result["trajectory"]) >= 180, "real-video trajectory became too sparse"
+    assert all(event.get("activityRegion") for event in result["events"]), "activity proxy missing"
     assert removal_matches >= 3, "real-video idle segmentation regressed"
     assert "镜头移动或拍摄中断" in removal_reasons
     assert metrics["suggested_serves"] >= 3, "serve suggestions regressed"

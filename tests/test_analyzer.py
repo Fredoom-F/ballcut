@@ -53,6 +53,7 @@ def run():
     assert result["capabilities"]["hitDecision"]["enabled"] is True
     assert result["capabilities"]["poseDetection"]["enabled"] is False
     assert result["capabilities"]["racketDetection"]["enabled"] is False
+    assert all(event.get("activityRegion") for event in result["events"])
     assert all("suggestedShotType" in event for event in result["events"])
 
     no_ball_fixture = ROOT / "tests" / "fixtures" / "synthetic-no-ball.avi"

@@ -339,6 +339,27 @@ video,
   padding: 14px;
 }
 
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timeline-controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.timeline-controls select {
+  min-height: 32px;
+  width: auto;
+}
+
 .timeline {
   position: relative;
   height: 54px;
@@ -540,6 +561,35 @@ video,
   font-size: 13px;
 }
 
+.data-insights-wrap {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+#dataInsights {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.data-insight {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.data-insight span {
+  color: var(--accent);
+}
+
+.data-insight p {
+  margin: 0;
+}
+
 .capability-disclosure {
   margin-top: 16px;
   border-top: 1px solid var(--line);
@@ -580,6 +630,49 @@ video,
 #capabilityList span,
 #capabilityList small {
   display: block;
+}
+
+.export-plan-wrap {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.export-plan-wrap > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.export-plan-wrap > div:first-child span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#exportPlanList {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.export-plan-row {
+  display: grid;
+  grid-template-columns: 20px 36px minmax(120px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 7px 0;
+  font-size: 12px;
+}
+
+.export-plan-row span {
+  color: var(--muted);
+}
+
+.export-plan-row button {
+  min-height: 30px;
+  padding: 0 9px;
 }
 
 #capabilityList span {

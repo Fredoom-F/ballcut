@@ -203,6 +203,26 @@ def point_near_activity(point, regions, padding_x=0.10, padding_up=0.34, padding
     return False
 
 
+def select_activity_region(point, regions):
+    nearby = [
+        region
+        for region in regions
+        if (
+            region["x"] - 0.10 <= point["xNorm"] <= region["x"] + region["w"] + 0.10
+            and region["y"] - 0.34 <= point["yNorm"] <= region["y"] + region["h"] + 0.10
+        )
+    ]
+    if not nearby:
+        return None
+    region = max(nearby, key=lambda item: item["area"])
+    return {
+        "x": round(region["x"], 4),
+        "y": round(region["y"], 4),
+        "w": round(region["w"], 4),
+        "h": round(region["h"], 4),
+    }
+
+
 def rolling_camera_stable(motion_samples, timestamp, window=0.55):
     nearby = [sample for sample in motion_samples if abs(sample["time"] - timestamp) <= window]
     if not nearby:
@@ -262,6 +282,7 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sens
         activity = min(motion_samples, key=lambda item: abs(item["time"] - center["time"]))
         stable_camera = rolling_camera_stable(motion_samples, center["time"])
         near_player_motion = point_near_activity(center, activity["regions"])
+        activity_region = select_activity_region(center, activity["regions"])
         in_event_area = point_in_sport_event_area(center, sport)
         if not moving or not event_signal or not stable_camera or not near_player_motion or not in_event_area:
             continue
@@ -289,6 +310,7 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sens
             "confidence": round(confidence, 3),
             "score": round(confidence, 3),
             "position": {"x": center["xNorm"], "y": center["yNorm"]},
+            "activityRegion": activity_region,
             "suggestedShotType": suggested_shot_type,
             "evidence": {
                 "directionChangeDegrees": round(math.degrees(math.acos(clamp(direction_cosine, -1, 1))), 1),
@@ -490,6 +512,7 @@ def analyze_video(
     frame_index = 0
     analysis_started = time.perf_counter()
     last_progress_at = 0.0
+    smoothed_eta = None
 
     if progress_callback:
         progress_callback(
@@ -573,7 +596,13 @@ def analyze_video(
             if elapsed - last_progress_at >= 0.75 or progress >= 0.97:
                 processed_frames = max(1, frame_index)
                 processing_fps = processed_frames / max(elapsed, 0.001)
-                eta = elapsed * (1.0 - progress) / progress if progress > 0.01 else None
+                raw_eta = elapsed * (1.0 - progress) / progress if progress > 0.01 else None
+                if raw_eta is not None:
+                    if smoothed_eta is None:
+                        smoothed_eta = raw_eta
+                    else:
+                        countdown_eta = max(0.0, smoothed_eta - (elapsed - last_progress_at))
+                        smoothed_eta = countdown_eta * 0.68 + raw_eta * 0.32
                 progress_callback(
                     {
                         "phase": "analyzing",
@@ -581,7 +610,7 @@ def analyze_video(
                         "processedSeconds": round(timestamp, 2),
                         "totalSeconds": round(duration, 3),
                         "elapsedSeconds": round(elapsed, 2),
-                        "etaSeconds": round(eta, 1) if eta is not None else None,
+                        "etaSeconds": round(smoothed_eta, 1) if smoothed_eta is not None else None,
                         "processingFps": round(processing_fps, 2),
                     }
                 )
