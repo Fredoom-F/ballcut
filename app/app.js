@@ -53,6 +53,7 @@ const { buildCandidateReviewMetrics, buildConfidenceBuckets } = window.JianqiuRe
 const { buildAnnotationPayload } = window.JianqiuAnnotationExport;
 const { updateCutReview, cutReviewLabel } = window.JianqiuCutReview;
 const { quickFileFingerprint } = window.JianqiuFileFingerprint;
+const { createLocalBackup, validateLocalBackup } = window.JianqiuLocalBackup;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -581,6 +582,35 @@ async function readTrainingHistory() {
     });
     request.addEventListener("error", () => reject(request.error));
     transaction.addEventListener("complete", () => db.close());
+  });
+}
+
+async function readAllTrainingHistory() {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(historyStoreName, "readonly");
+    const request = transaction.objectStore(historyStoreName).getAll();
+    request.addEventListener("success", () => resolve(request.result.slice(0, 100)));
+    request.addEventListener("error", () => reject(request.error));
+    transaction.addEventListener("complete", () => db.close());
+  });
+}
+
+async function replaceTrainingHistory(history) {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(historyStoreName, "readwrite");
+    const store = transaction.objectStore(historyStoreName);
+    store.clear();
+    history.forEach((item) => store.put(item));
+    transaction.addEventListener("complete", () => {
+      db.close();
+      resolve();
+    });
+    transaction.addEventListener("error", () => {
+      db.close();
+      reject(transaction.error);
+    });
   });
 }
 
@@ -2708,6 +2738,48 @@ function downloadText(filename, text, type) {
   URL.revokeObjectURL(url);
 }
 
+async function downloadLocalBackup() {
+  let preferences = {};
+  try {
+    preferences = JSON.parse(localStorage.getItem(preferenceStorageKey) || "{}");
+  } catch {
+    localStorage.removeItem(preferenceStorageKey);
+  }
+  const history = await readAllTrainingHistory().catch(() => []);
+  const payload = createLocalBackup({ preferences, history });
+  downloadText(
+    `jianqiu-local-backup-${Date.now()}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json;charset=utf-8"
+  );
+  setLog(["本机设置备份已下载。", `包含 ${history.length} 条训练历史和编辑偏好，不包含视频或分析缓存。`]);
+}
+
+async function importLocalBackup(file) {
+  if (!file || file.size > 5 * 1024 * 1024) {
+    setLog(["备份文件无效或超过 5MB 限制。"]);
+    return;
+  }
+  try {
+    const restored = validateLocalBackup(
+      JSON.parse(await file.text()),
+      preferenceControlIds
+    );
+    localStorage.setItem(preferenceStorageKey, JSON.stringify(restored.preferences));
+    await replaceTrainingHistory(restored.history);
+    loadEditorPreferences();
+    renderAll();
+    setLog([
+      "本机设置备份已恢复。",
+      `恢复 ${restored.history.length} 条训练历史和 ${Object.keys(restored.preferences).length} 项编辑偏好；视频和当前项目未被替换。`
+    ]);
+  } catch (error) {
+    setLog(["无法恢复本机设置备份。", error.message]);
+  } finally {
+    $("localBackupInput").value = "";
+  }
+}
+
 async function importProjectFile(file) {
   if (!state.file) {
     setLog(["请先选择项目对应的原视频，再导入剪辑项目。"]);
@@ -3785,6 +3857,9 @@ document.querySelector(".player-frame").addEventListener("click", handlePlayerFr
 $("demoBtn").addEventListener("click", createDemoVideo);
 $("importProjectBtn").addEventListener("click", () => $("projectInput").click());
 $("projectInput").addEventListener("change", (event) => importProjectFile(event.target.files[0]));
+$("exportLocalBackupBtn").addEventListener("click", downloadLocalBackup);
+$("importLocalBackupBtn").addEventListener("click", () => $("localBackupInput").click());
+$("localBackupInput").addEventListener("change", (event) => importLocalBackup(event.target.files[0]));
 $("clearLocalDataBtn").addEventListener("click", clearLocalAnalysisData);
 $("retryEnvironmentBtn").addEventListener("click", () => checkLocalAnalyzerEnvironment(true));
 $("restoreBtn").addEventListener("click", () => {

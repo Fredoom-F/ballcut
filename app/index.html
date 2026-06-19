@@ -184,6 +184,9 @@
           <button id="demoBtn">生成演示视频</button>
           <button id="importProjectBtn" type="button">导入剪辑项目</button>
           <input id="projectInput" type="file" accept="application/json,.json" hidden />
+          <button id="exportLocalBackupBtn" type="button">下载本机设置备份</button>
+          <button id="importLocalBackupBtn" type="button">恢复本机设置备份</button>
+          <input id="localBackupInput" type="file" accept="application/json,.json" hidden />
           <button id="exportBtn" disabled>导出带水印预览</button>
           <button id="decisionBtn" disabled>下载剪辑决策</button>
           <button id="retryEnvironmentBtn" type="button">重新检查本地服务</button>
@@ -409,6 +412,7 @@
     <script src="./annotation-export.js"></script>
     <script src="./cut-review.js"></script>
     <script src="./file-fingerprint.js"></script>
+    <script src="./local-backup.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
