@@ -47,7 +47,7 @@ def run():
         health_response = health_connection.getresponse()
         health = json.loads(health_response.read().decode("utf-8"))
         assert health_response.status == 200
-        assert health["version"] == "0.3.1"
+        assert health["version"] == "0.4.0"
         assert health["analyzerReady"] is True
         assert health_response.getheader("X-Content-Type-Options") == "nosniff"
         assert health_response.getheader("Cross-Origin-Resource-Policy") == "same-origin"
@@ -91,6 +91,17 @@ def run():
         oversized_response = oversized_connection.getresponse()
         assert oversized_response.status == 413
         oversized_response.read()
+
+        invalid_angle_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        invalid_angle_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis&cameraAngle=unknown",
+            body=b"",
+            headers={"Content-Type": "application/octet-stream", "Content-Length": "0"},
+        )
+        invalid_angle_response = invalid_angle_connection.getresponse()
+        assert invalid_angle_response.status == 400
+        invalid_angle_response.read()
 
         system_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         system_connection.request("GET", "/api/system")

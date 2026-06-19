@@ -43,6 +43,45 @@ SPORT_CONFIG = {
     },
 }
 
+CAMERA_PROFILES = {
+    "auto": {
+        "shift": 2.0,
+        "energy": 0.25,
+        "window": 0.55,
+        "paddingX": 0.10,
+        "paddingUp": 0.34,
+        "paddingDown": 0.10,
+        "eventY": (0.24, 0.90),
+    },
+    "baseline": {
+        "shift": 1.8,
+        "energy": 0.23,
+        "window": 0.60,
+        "paddingX": 0.10,
+        "paddingUp": 0.36,
+        "paddingDown": 0.10,
+        "eventY": (0.22, 0.90),
+    },
+    "sideline": {
+        "shift": 2.0,
+        "energy": 0.25,
+        "window": 0.50,
+        "paddingX": 0.10,
+        "paddingUp": 0.34,
+        "paddingDown": 0.10,
+        "eventY": (0.08, 0.96),
+    },
+    "handheld": {
+        "shift": 3.0,
+        "energy": 0.30,
+        "window": 0.38,
+        "paddingX": 0.12,
+        "paddingUp": 0.34,
+        "paddingDown": 0.12,
+        "eventY": (0.22, 0.92),
+    },
+}
+
 
 def clamp(value, minimum, maximum):
     return max(minimum, min(maximum, value))
@@ -193,7 +232,10 @@ def choose_candidate(candidates, last_point, predicted_point, frame_diagonal):
     return max(plausible, key=lambda item: item["score"])
 
 
-def point_near_activity(point, regions, padding_x=0.10, padding_up=0.34, padding_down=0.10):
+def point_near_activity(point, regions, profile):
+    padding_x = profile["paddingX"]
+    padding_up = profile["paddingUp"]
+    padding_down = profile["paddingDown"]
     for region in regions:
         if (
             region["x"] - padding_x <= point["xNorm"] <= region["x"] + region["w"] + padding_x
@@ -203,13 +245,13 @@ def point_near_activity(point, regions, padding_x=0.10, padding_up=0.34, padding
     return False
 
 
-def select_activity_region(point, regions):
+def select_activity_region(point, regions, profile):
     nearby = [
         region
         for region in regions
         if (
-            region["x"] - 0.10 <= point["xNorm"] <= region["x"] + region["w"] + 0.10
-            and region["y"] - 0.34 <= point["yNorm"] <= region["y"] + region["h"] + 0.10
+            region["x"] - profile["paddingX"] <= point["xNorm"] <= region["x"] + region["w"] + profile["paddingX"]
+            and region["y"] - profile["paddingUp"] <= point["yNorm"] <= region["y"] + region["h"] + profile["paddingDown"]
         )
     ]
     if not nearby:
@@ -223,25 +265,33 @@ def select_activity_region(point, regions):
     }
 
 
-def rolling_camera_stable(motion_samples, timestamp, window=0.55):
+def rolling_camera_stable(motion_samples, timestamp, profile):
+    window = profile["window"]
     nearby = [sample for sample in motion_samples if abs(sample["time"] - timestamp) <= window]
     if not nearby:
         return False
     shifts = np.array([sample["cameraShift"] for sample in nearby], dtype=np.float32)
     energies = np.array([sample["energy"] for sample in nearby], dtype=np.float32)
-    return float(np.percentile(shifts, 75)) <= 2.0 and float(np.percentile(energies, 65)) <= 0.25
+    return (
+        float(np.percentile(shifts, 75)) <= profile["shift"]
+        and float(np.percentile(energies, 65)) <= profile["energy"]
+    )
 
 
-def point_in_sport_event_area(point, sport):
+def point_in_sport_event_area(point, sport, profile):
     if sport in {"tennis", "badminton"}:
-        return 0.03 <= point["xNorm"] <= 0.97 and 0.24 <= point["yNorm"] <= 0.90
+        return (
+            0.03 <= point["xNorm"] <= 0.97
+            and profile["eventY"][0] <= point["yNorm"] <= profile["eventY"][1]
+        )
     return 0.02 <= point["xNorm"] <= 0.98 and 0.04 <= point["yNorm"] <= 0.96
 
 
-def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sensitivity):
+def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sensitivity, camera_angle):
     events = []
     if len(track) < 5:
         return events
+    camera_profile = CAMERA_PROFILES.get(camera_angle, CAMERA_PROFILES["auto"])
 
     min_speed = frame_diagonal * {1: 0.11, 2: 0.09, 3: 0.07}.get(sensitivity, 0.09)
     acceleration_threshold = frame_diagonal * {1: 0.22, 2: 0.18, 3: 0.14}.get(sensitivity, 0.18)
@@ -280,10 +330,10 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sens
         racket_sports = {"tennis", "badminton", "tabletennis"}
         event_signal = direction_reversal if sport in racket_sports else (direction_reversal or sharp_acceleration)
         activity = min(motion_samples, key=lambda item: abs(item["time"] - center["time"]))
-        stable_camera = rolling_camera_stable(motion_samples, center["time"])
-        near_player_motion = point_near_activity(center, activity["regions"])
-        activity_region = select_activity_region(center, activity["regions"])
-        in_event_area = point_in_sport_event_area(center, sport)
+        stable_camera = rolling_camera_stable(motion_samples, center["time"], camera_profile)
+        near_player_motion = point_near_activity(center, activity["regions"], camera_profile)
+        activity_region = select_activity_region(center, activity["regions"], camera_profile)
+        in_event_area = point_in_sport_event_area(center, sport, camera_profile)
         if not moving or not event_signal or not stable_camera or not near_player_motion or not in_event_area:
             continue
 
@@ -334,8 +384,9 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sens
     return events
 
 
-def build_segments(duration, track, events, motion_samples, strength, frame_diagonal):
+def build_segments(duration, track, events, motion_samples, strength, frame_diagonal, camera_angle):
     active_ranges = []
+    camera_profile = CAMERA_PROFILES.get(camera_angle, CAMERA_PROFILES["auto"])
     padding = {1: 3.2, 2: 2.2, 3: 1.4}.get(strength, 2.2)
 
     movement_threshold = frame_diagonal * 0.05
@@ -346,7 +397,7 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
         if dt <= 0 or dt > 0.45:
             continue
         speed = math.dist((point["x"], point["y"]), (previous["x"], previous["y"])) / dt
-        if speed >= movement_threshold and rolling_camera_stable(motion_samples, point["time"]):
+        if speed >= movement_threshold and rolling_camera_stable(motion_samples, point["time"], camera_profile):
             active_ranges.append((max(0, point["time"] - 0.45), min(duration, point["time"] + 0.45)))
     for event in events:
         active_ranges.append((max(0, event["timestamp"] - padding), min(duration, event["timestamp"] + padding)))
@@ -358,7 +409,7 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
             if (
                 sample["energy"] >= threshold
                 and sample["energy"] <= 0.25
-                and rolling_camera_stable(motion_samples, sample["time"])
+                and rolling_camera_stable(motion_samples, sample["time"], camera_profile)
             ):
                 active_ranges.append((max(0, sample["time"] - 0.5), min(duration, sample["time"] + 0.5)))
 
@@ -470,6 +521,7 @@ def analyze_video(
     ball_rgb=None,
     sensitivity=2,
     preset="standard",
+    camera_angle="auto",
 ):
     base_config = SPORT_CONFIG.get(sport, SPORT_CONFIG["tennis"])
     config = {**base_config, "ranges": list(base_config["ranges"])}
@@ -630,12 +682,17 @@ def analyze_video(
                 "processingFps": round(frame_index / max(elapsed, 0.001), 2),
             }
         )
-    events = detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sensitivity)
-    segments = build_segments(duration, track, events, motion_samples, strength, frame_diagonal)
+    camera_profile = CAMERA_PROFILES.get(camera_angle, CAMERA_PROFILES["auto"])
+    events = detect_events(
+        track, sample_fps, frame_diagonal, sport, motion_samples, sensitivity, camera_angle
+    )
+    segments = build_segments(
+        duration, track, events, motion_samples, strength, frame_diagonal, camera_angle
+    )
     stable_track = [
         point
         for point in track
-        if rolling_camera_stable(motion_samples, point["time"])
+        if rolling_camera_stable(motion_samples, point["time"], camera_profile)
         and 0.02 <= point["xNorm"] <= 0.98
         and 0.04 <= point["yNorm"] <= 0.96
     ]
@@ -735,6 +792,12 @@ def analyze_video(
             "ballColor": f"用户校准 RGB{tuple(ball_rgb)}" if ball_rgb else "运动默认颜色范围",
             "sensitivity": {1: "保守", 2: "标准", 3: "灵敏"}.get(sensitivity, "标准"),
             "preset": {"fast": "快速预筛", "standard": "标准", "precise": "精细追踪"}.get(preset, "标准"),
+            "cameraAngle": {
+                "auto": "自动",
+                "baseline": "底线固定",
+                "sideline": "边线固定",
+                "handheld": "手持跟拍",
+            }.get(camera_angle, "自动"),
         },
     }
 
@@ -755,6 +818,11 @@ def main():
     parser.add_argument("--ball-rgb")
     parser.add_argument("--sensitivity", type=int, default=2)
     parser.add_argument("--preset", choices=["fast", "standard", "precise"], default="standard")
+    parser.add_argument(
+        "--camera-angle",
+        choices=["auto", "baseline", "sideline", "handheld"],
+        default="auto",
+    )
     args = parser.parse_args()
     callback = emit_progress if args.progress else None
     ball_rgb = None
@@ -771,6 +839,7 @@ def main():
         ball_rgb=ball_rgb,
         sensitivity=max(1, min(3, args.sensitivity)),
         preset=args.preset,
+        camera_angle=args.camera_angle,
     )
     payload = json.dumps(result, ensure_ascii=False)
     if args.output:

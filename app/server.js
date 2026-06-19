@@ -8,7 +8,7 @@ const { spawn, spawnSync } = require("child_process");
 const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
-const serviceVersion = "0.3.1";
+const serviceVersion = "0.4.0";
 const maxUploadBytes = 1024 * 1024 * 1024;
 const maxConcurrentJobs = 2;
 const maxConcurrentUploads = 2;
@@ -114,10 +114,12 @@ function validateAnalyzeOptions(requestUrl) {
   const strength = Math.max(1, Math.min(3, Number(requestUrl.searchParams.get("strength") || 2)));
   const sensitivity = Math.max(1, Math.min(3, Number(requestUrl.searchParams.get("sensitivity") || 2)));
   const preset = requestUrl.searchParams.get("preset") || "standard";
+  const cameraAngle = requestUrl.searchParams.get("cameraAngle") || "auto";
   const ballValue = requestUrl.searchParams.get("ball");
   const allowedSports = new Set(["tennis", "badminton", "tabletennis", "basketball", "football", "golf"]);
   if (!allowedSports.has(sport)) return null;
   if (!new Set(["fast", "standard", "precise"]).has(preset)) return null;
+  if (!new Set(["auto", "baseline", "sideline", "handheld"]).has(cameraAngle)) return null;
   let ballColor = null;
   if (ballValue) {
     const channels = ballValue.split(",").map(Number);
@@ -126,7 +128,7 @@ function validateAnalyzeOptions(requestUrl) {
     }
     ballColor = channels;
   }
-  return { sport, strength, sensitivity, preset, ballColor };
+  return { sport, strength, sensitivity, preset, cameraAngle, ballColor };
 }
 
 function inspectAnalyzerEnvironment() {
@@ -216,7 +218,7 @@ function startAnalyzeJob(req, res, requestUrl) {
   }
   const options = validateAnalyzeOptions(requestUrl);
   if (!options) {
-    sendJson(res, 400, { error: "不支持的运动类型" });
+    sendJson(res, 400, { error: "不支持的分析参数" });
     return;
   }
 
@@ -248,6 +250,7 @@ function startAnalyzeJob(req, res, requestUrl) {
       options.strength,
       options.sensitivity,
       options.preset,
+      options.cameraAngle,
       options.ballColor,
       (progress) => {
       Object.assign(job, progress, {
@@ -426,7 +429,7 @@ function analyzeRequest(req, res) {
   const requestUrl = new URL(req.url, `http://127.0.0.1:${port}`);
   const options = validateAnalyzeOptions(requestUrl);
   if (!options) {
-    sendJson(res, 400, { error: "不支持的运动类型" });
+    sendJson(res, 400, { error: "不支持的分析参数" });
     return;
   }
 
@@ -438,6 +441,7 @@ function analyzeRequest(req, res) {
         options.strength,
         options.sensitivity,
         options.preset,
+        options.cameraAngle,
         options.ballColor
       );
       const result = await analyzer.promise;
@@ -450,11 +454,12 @@ function analyzeRequest(req, res) {
   });
 }
 
-function runAnalyzer(videoPath, sport, strength, sensitivity, preset, ballColor, onProgress, reportProgress = false) {
+function runAnalyzer(videoPath, sport, strength, sensitivity, preset, cameraAngle, ballColor, onProgress, reportProgress = false) {
   const script = path.join(projectRoot, "analyzer", "analyze_video.py");
   const args = [script, videoPath, "--sport", sport, "--strength", String(strength)];
   args.push("--sensitivity", String(sensitivity));
   args.push("--preset", preset);
+  args.push("--camera-angle", cameraAngle);
   if (ballColor) args.push("--ball-rgb", ballColor.join(","));
   if (reportProgress) args.push("--progress");
   const child = spawn(

@@ -10,8 +10,10 @@ $runtimeRoot = Join-Path $env:LOCALAPPDATA "Jianqiu"
 $stdoutLog = Join-Path $runtimeRoot "server.log"
 $stderrLog = Join-Path $runtimeRoot "server-error.log"
 $pidFile = Join-Path $runtimeRoot "server.pid"
+$nodePidFile = Join-Path $runtimeRoot "node.pid"
+$stopFile = Join-Path $runtimeRoot "stop.requested"
 $healthUrl = "http://127.0.0.1:4173/health"
-$expectedVersion = "0.3.1"
+$expectedVersion = "0.4.0"
 
 function Test-JianqiuService {
     try {
@@ -63,13 +65,18 @@ if ($listener) {
 }
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+Remove-Item -LiteralPath $stopFile -Force -ErrorAction SilentlyContinue
 $process = Start-Process `
-    -FilePath "node" `
-    -ArgumentList "server.js" `
-    -WorkingDirectory $appRoot `
+    -FilePath "powershell.exe" `
+    -ArgumentList @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $projectRoot "run-jianqiu-service.ps1"),
+        "-ProjectRoot", $projectRoot,
+        "-RuntimeRoot", $runtimeRoot
+    ) `
+    -WorkingDirectory $projectRoot `
     -WindowStyle Hidden `
-    -RedirectStandardOutput $stdoutLog `
-    -RedirectStandardError $stderrLog `
     -PassThru
 Set-Content -LiteralPath $pidFile -Value $process.Id -Encoding ascii
 
@@ -87,6 +94,9 @@ for ($attempt = 0; $attempt -lt 30; $attempt += 1) {
 
 if (-not $ready) {
     Write-Host "Jianqiu failed to start. Error log: $stderrLog"
+    if (Test-Path -LiteralPath $nodePidFile) {
+        Stop-Process -Id (Get-Content -LiteralPath $nodePidFile) -Force -ErrorAction SilentlyContinue
+    }
     exit 1
 }
 

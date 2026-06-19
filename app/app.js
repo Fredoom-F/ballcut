@@ -55,6 +55,7 @@ const activeJobStorageKey = "jianqiu-active-analysis";
 const preferenceStorageKey = "jianqiu-editor-preferences-v1";
 const preferenceControlIds = [
   "sportSelect",
+  "cameraAngle",
   "modeSelect",
   "highlightDuration",
   "ratioSelect",
@@ -240,7 +241,7 @@ function openAnalysisDb() {
   });
 }
 
-function getAnalysisCacheKey(file, sport, strength, sensitivity, preset) {
+function getAnalysisCacheKey(file, sport, strength, sensitivity, preset, cameraAngle) {
   return [
     "v4",
     file.name,
@@ -250,6 +251,7 @@ function getAnalysisCacheKey(file, sport, strength, sensitivity, preset) {
     strength,
     sensitivity,
     preset,
+    cameraAngle,
     state.ballColor ? state.ballColor.join(",") : "default"
   ].join(":");
 }
@@ -289,15 +291,10 @@ function resetBallColor() {
 
 function sampleBallColor(event) {
   if (!state.calibrationMode || !video.videoWidth || !video.videoHeight) return;
-  const rect = video.getBoundingClientRect();
-  if (
-    event.clientX < rect.left ||
-    event.clientX > rect.right ||
-    event.clientY < rect.top ||
-    event.clientY > rect.bottom
-  ) return;
-  const sourceX = Math.floor(((event.clientX - rect.left) / rect.width) * video.videoWidth);
-  const sourceY = Math.floor(((event.clientY - rect.top) / rect.height) * video.videoHeight);
+  const point = normalizedVideoPoint(event);
+  if (!point) return;
+  const sourceX = Math.floor(point.x * video.videoWidth);
+  const sourceY = Math.floor(point.y * video.videoHeight);
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = 5;
   sampleCanvas.height = 5;
@@ -668,7 +665,10 @@ async function generateAnalysis() {
   const strength = Number($("cutStrength").value);
   const sensitivity = Number($("hitSensitivity").value);
   const preset = $("analysisPreset").value;
-  const cacheKey = getAnalysisCacheKey(state.file, sport, strength, sensitivity, preset);
+  const cameraAngle = $("cameraAngle").value;
+  const cacheKey = getAnalysisCacheKey(
+    state.file, sport, strength, sensitivity, preset, cameraAngle
+  );
   state.currentCacheKey = cacheKey;
   state.analyzing = true;
   state.analysisJobId = null;
@@ -711,6 +711,7 @@ async function generateAnalysis() {
       strength,
       sensitivity,
       preset,
+      cameraAngle,
       state.ballColor,
       cacheKey
     );
@@ -763,7 +764,7 @@ async function generateAnalysis() {
   }
 }
 
-function uploadAnalysisJob(file, sport, strength, sensitivity, preset, ballColor, cacheKey) {
+function uploadAnalysisJob(file, sport, strength, sensitivity, preset, cameraAngle, ballColor, cacheKey) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     state.analysisRequest = xhr;
@@ -775,7 +776,7 @@ function uploadAnalysisJob(file, sport, strength, sensitivity, preset, ballColor
     const ballQuery = ballColor ? `&ball=${encodeURIComponent(ballColor.join(","))}` : "";
     xhr.open(
       "POST",
-      `/api/analyze/start?sport=${encodeURIComponent(sport)}&strength=${strength}&sensitivity=${sensitivity}&preset=${encodeURIComponent(preset)}${ballQuery}`
+      `/api/analyze/start?sport=${encodeURIComponent(sport)}&strength=${strength}&sensitivity=${sensitivity}&preset=${encodeURIComponent(preset)}&cameraAngle=${encodeURIComponent(cameraAngle)}${ballQuery}`
     );
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("X-Jianqiu-File-Name", encodeURIComponent(file.name));
@@ -2261,8 +2262,15 @@ function updatePlaybackProgress() {
 function makeDecisionPayload() {
   return {
     app: "剪球 MVP",
+    project_version: 2,
     local_only: true,
     source_file: state.file?.name || "",
+    source_fingerprint: state.file ? {
+      name: state.file.name,
+      size: state.file.size,
+      lastModified: state.file.lastModified,
+      duration: state.duration
+    } : null,
     duration: state.duration,
     sport: $("sportSelect").value,
     mode: $("modeSelect").value,
@@ -2375,6 +2383,9 @@ async function importProjectFile(file) {
   }
   try {
     const payload = JSON.parse(await file.text());
+    if (Number(payload.project_version || 1) > 2) {
+      throw new Error("项目文件来自更高版本的剪球，请先更新本地程序");
+    }
     if (
       !Array.isArray(payload.events) ||
       !Array.isArray(payload.segments) ||
@@ -2385,13 +2396,47 @@ async function importProjectFile(file) {
     if (payload.duration && Math.abs(payload.duration - state.duration) > 2) {
       throw new Error("项目时长与当前视频不匹配");
     }
+    const fingerprint = payload.source_fingerprint;
+    if (fingerprint?.duration && Math.abs(fingerprint.duration - state.duration) > 1) {
+      throw new Error("项目指纹时长与当前视频不匹配");
+    }
+    if (fingerprint?.size) {
+      const sizeTolerance = Math.max(1024 * 1024, fingerprint.size * 0.01);
+      if (Math.abs(fingerprint.size - state.file.size) > sizeTolerance) {
+        throw new Error("项目文件大小与当前视频不匹配，可能选错了原视频");
+      }
+    }
+    const validNormalizedPoint = (point) =>
+      point &&
+      Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      point.x >= 0 &&
+      point.x <= 1 &&
+      point.y >= 0 &&
+      point.y <= 1;
+    const validActivityRegion = (region) =>
+      region == null ||
+      (
+        Number.isFinite(region.x) &&
+        Number.isFinite(region.y) &&
+        Number.isFinite(region.w) &&
+        Number.isFinite(region.h) &&
+        region.x >= 0 &&
+        region.y >= 0 &&
+        region.w >= 0 &&
+        region.h >= 0 &&
+        region.x + region.w <= 1.02 &&
+        region.y + region.h <= 1.02
+      );
     const validEvent = (event) =>
       Number.isFinite(event.timestamp) &&
       event.timestamp >= 0 &&
       event.timestamp <= state.duration + 1 &&
       Number.isFinite(event.confidence) &&
       event.confidence >= 0 &&
-      event.confidence <= 1;
+      event.confidence <= 1 &&
+      (event.position == null || validNormalizedPoint(event.position)) &&
+      validActivityRegion(event.activityRegion);
     const validSegment = (segment) =>
       Number.isFinite(segment.start) &&
       Number.isFinite(segment.end) &&
@@ -2445,7 +2490,8 @@ async function importProjectFile(file) {
       $("sportSelect").value,
       Number($("cutStrength").value),
       Number($("hitSensitivity").value),
-      $("analysisPreset").value
+      $("analysisPreset").value,
+      $("cameraAngle").value
     );
     rebuildHighlights();
     initializeEditHistory();
@@ -2470,7 +2516,10 @@ async function importProjectFile(file) {
     renderAll();
     setLog([
       "剪辑项目已导入。",
-      `恢复 ${state.events.length} 个事件、${state.segments.length} 个片段和 ${state.trajectory.length} 个轨迹点。`
+      `恢复 ${state.events.length} 个事件、${state.segments.length} 个片段和 ${state.trajectory.length} 个轨迹点。`,
+      payload.source_file && payload.source_file !== state.file.name
+        ? `提示：项目原文件名为 ${String(payload.source_file).slice(0, 100)}，当前文件名不同，但时长与大小校验已通过。`
+        : "原视频指纹校验通过。"
     ]);
   } catch (error) {
     setLog(["无法导入剪辑项目。", error.message]);
@@ -3283,6 +3332,15 @@ $("analysisPreset").addEventListener("change", () => {
     `已切换到${preset === "standard" ? "标准" : preset === "fast" ? "快速预筛" : "精细追踪"}。`,
     `按本机历史速度，预计约 ${formatRemaining(getEstimatedAnalysisSeconds(state.duration, preset)).replace("预计剩余 ", "")}。`
   ]);
+});
+$("cameraAngle").addEventListener("change", () => {
+  const angle = $("cameraAngle").value;
+  if (angle === "sideline" || angle === "handheld") {
+    setLog([
+      angle === "sideline" ? "已选择边线广角机位。" : "已选择手持跟拍机位。",
+      "该模式会扩大镜头与击球区域容忍，可能生成更多候选，请在导出前完成复核。"
+    ]);
+  }
 });
 $("modeSelect").addEventListener("change", () => {
   $("highlightDuration").disabled = $("modeSelect").value !== "highlights";

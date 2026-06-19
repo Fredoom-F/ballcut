@@ -187,6 +187,13 @@ def run():
     assert 'id="timelineRangeLabel"' in html
     assert "getTimelineViewport" in app_js
     assert "centerTimelineOn" in app_js
+    assert "source_fingerprint" in app_js
+    assert "project_version" in app_js
+    assert "项目指纹时长与当前视频不匹配" in app_js
+    assert "validActivityRegion" in app_js
+    assert 'id="cameraAngle"' in html
+    assert "cameraAngle" in app_js
+    assert "normalizedVideoPoint(event)" in app_js
     print("Frontend timeline playhead contract passed.")
 
 
