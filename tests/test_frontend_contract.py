@@ -232,6 +232,12 @@ def run():
     assert ".cut-actions" in styles
     assert "updateCutReview" in app_js
     assert "cutReviewLabel" in app_js
+    assert 'aria-label="选择本地视频"' in html
+    assert 'role="slider"' in html
+    assert 'tabindex="0"' in html
+    assert 'setAttribute("aria-valuenow"' in app_js
+    assert ":focus-visible" in styles
+    assert "prefers-reduced-motion" in styles
     assert "#exportReadinessList" in styles
     assert "buildCandidateReviewMetrics" in app_js
     assert "buildConfidenceBuckets" in app_js

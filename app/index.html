@@ -23,7 +23,7 @@
       <section class="workspace">
         <aside class="panel controls">
           <div class="upload-box" id="dropZone">
-            <input id="videoInput" type="file" accept="video/mp4,video/webm,video/quicktime,video/*" />
+            <input id="videoInput" type="file" accept="video/mp4,video/webm,video/quicktime,video/*" aria-label="选择本地视频" />
             <div class="upload-icon">⬆</div>
             <strong>上传球类视频</strong>
             <span>拖入文件或点击选择</span>
@@ -211,10 +211,10 @@
               <small id="videoPreflight">载入后显示素材预检</small>
             </div>
             <div class="playback-tools">
-              <button id="previousEventBtn" type="button" disabled title="上一个击球">◀</button>
-              <button id="nextEventBtn" type="button" disabled title="下一个击球">▶</button>
-              <button id="previousFrameBtn" type="button" disabled title="上一帧">−1f</button>
-              <button id="nextFrameBtn" type="button" disabled title="下一帧">+1f</button>
+              <button id="previousEventBtn" type="button" disabled title="上一个击球" aria-label="上一个击球">◀</button>
+              <button id="nextEventBtn" type="button" disabled title="下一个击球" aria-label="下一个击球">▶</button>
+              <button id="previousFrameBtn" type="button" disabled title="上一帧" aria-label="上一帧">−1f</button>
+              <button id="nextFrameBtn" type="button" disabled title="下一帧" aria-label="下一帧">+1f</button>
               <label>
                 复核速度
                 <select id="reviewPlaybackRate" aria-label="复核播放速度">
@@ -246,7 +246,17 @@
               </label>
               <span id="timelineRangeLabel">全片</span>
             </div>
-            <div id="timeline" class="timeline" aria-label="视频时间线"></div>
+            <div
+              id="timeline"
+              class="timeline"
+              role="slider"
+              tabindex="0"
+              aria-label="视频时间线"
+              aria-valuemin="0"
+              aria-valuemax="0"
+              aria-valuenow="0"
+              aria-valuetext="00:00"
+            ></div>
             <div class="legend">
               <span><i class="keep"></i>保留</span>
               <span><i class="remove"></i>捡球/等待</span>
@@ -367,8 +377,8 @@
             </div>
             <div class="panel-actions">
               <span id="reviewProgress" class="review-progress">复核 0 / 0</span>
-              <button id="undoEditBtn" disabled title="撤销">↶</button>
-              <button id="redoEditBtn" disabled title="重做">↷</button>
+              <button id="undoEditBtn" disabled title="撤销" aria-label="撤销">↶</button>
+              <button id="redoEditBtn" disabled title="重做" aria-label="重做">↷</button>
               <button id="markCutStartBtn" disabled>标记删除起点</button>
               <button id="finishCutBtn" disabled>删除到此处</button>
               <select id="eventFilter" aria-label="筛选识别结果">

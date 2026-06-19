@@ -2574,6 +2574,9 @@ function updatePlaybackProgress() {
     : 0;
   const playhead = $("timelinePlayhead");
   if (playhead) playhead.style.left = `${progress * 100}%`;
+  $("timeline").setAttribute("aria-valuemax", String(Math.max(0, Math.round(state.duration))));
+  $("timeline").setAttribute("aria-valuenow", String(Math.max(0, Math.round(video.currentTime))));
+  $("timeline").setAttribute("aria-valuetext", formatTime(video.currentTime));
   $("durationLabel").textContent = `${formatTime(video.currentTime)} / ${formatTime(state.duration)}`;
 }
 
