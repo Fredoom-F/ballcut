@@ -12,7 +12,7 @@ $pidFile = Join-Path $runtimeRoot "server.pid"
 $nodePidFile = Join-Path $runtimeRoot "node.pid"
 $stopFile = Join-Path $runtimeRoot "stop.requested"
 $healthUrl = "http://127.0.0.1:4173/health"
-$expectedVersion = "0.4.2"
+$expectedVersion = "0.4.3"
 
 function Test-JianqiuService {
     try {

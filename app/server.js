@@ -8,7 +8,7 @@ const { spawn, spawnSync } = require("child_process");
 const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
-const serviceVersion = "0.4.2";
+const serviceVersion = "0.4.3";
 const maxUploadBytes = 1024 * 1024 * 1024;
 const maxConcurrentJobs = 2;
 const maxConcurrentUploads = 2;
@@ -26,10 +26,14 @@ const types = {
 };
 
 function safePath(urlPath) {
-  const cleanPath = decodeURIComponent(urlPath.split("?")[0]);
-  const target = path.resolve(root, cleanPath === "/" ? "index.html" : cleanPath.slice(1));
-  const relative = path.relative(root, target);
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? target : null;
+  try {
+    const cleanPath = decodeURIComponent(urlPath.split("?")[0]);
+    const target = path.resolve(root, cleanPath === "/" ? "index.html" : cleanPath.slice(1));
+    const relative = path.relative(root, target);
+    return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? target : null;
+  } catch {
+    return null;
+  }
 }
 
 const server = http.createServer((req, res) => {

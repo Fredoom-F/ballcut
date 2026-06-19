@@ -30,6 +30,7 @@ def run():
     assert "Start-Process" in background_start_script
     assert "-WindowStyle Hidden" in background_start_script
     assert "expectedVersion" in background_start_script
+    assert '$expectedVersion = "0.4.3"' in background_start_script
     assert "LOCALAPPDATA" in background_start_script
     assert "run-jianqiu-service.ps1" in background_start_script
     assert "run-jianqiu-service\\.ps1" in background_start_script

@@ -48,7 +48,7 @@ def run():
         health_response = health_connection.getresponse()
         health = json.loads(health_response.read().decode("utf-8"))
         assert health_response.status == 200
-        assert health["version"] == "0.4.2"
+        assert health["version"] == "0.4.3"
         assert health["analyzerReady"] is True
         assert health_response.getheader("X-Content-Type-Options") == "nosniff"
         assert health_response.getheader("Cross-Origin-Resource-Policy") == "same-origin"
@@ -67,6 +67,18 @@ def run():
         assert traversal_response.status == 403
         assert traversal_response.getheader("X-Content-Type-Options") == "nosniff"
         traversal_response.read()
+
+        malformed_path_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        malformed_path_connection.request("GET", "/%E0%A4%A")
+        malformed_path_response = malformed_path_connection.getresponse()
+        assert malformed_path_response.status == 403
+        malformed_path_response.read()
+
+        post_malformed_health_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        post_malformed_health_connection.request("GET", "/health")
+        post_malformed_health_response = post_malformed_health_connection.getresponse()
+        assert post_malformed_health_response.status == 200
+        post_malformed_health_response.read()
 
         empty_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         empty_connection.request(
@@ -111,7 +123,7 @@ def run():
         assert system_response.status == 200
         assert system_state["ready"] is True
         assert system_state["opencv"]
-        assert system_state["serviceVersion"] == "0.4.2"
+        assert system_state["serviceVersion"] == "0.4.3"
 
         cross_origin_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         cross_origin_connection.request(
