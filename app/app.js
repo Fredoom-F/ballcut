@@ -49,6 +49,7 @@ const { mergeSegments, selectByDuration } = window.JianqiuHighlightSelection;
 const { buildExportReadiness } = window.JianqiuExportReadiness;
 const { buildCandidateReviewMetrics, buildConfidenceBuckets } = window.JianqiuReviewMetrics;
 const { buildAnnotationPayload } = window.JianqiuAnnotationExport;
+const { updateCutReview, cutReviewLabel } = window.JianqiuCutReview;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -2079,11 +2080,7 @@ function renderCuts() {
   cuts.forEach((segment) => {
     const card = document.createElement("div");
     card.className = `cut-card ${segment.restored ? "restored" : ""} ${segment.reviewStatus || ""}`;
-    const status = segment.restored || segment.reviewStatus === "rejected"
-      ? "已恢复保留"
-      : segment.reviewStatus === "confirmed"
-        ? "已确认删除"
-        : "待复核";
+    const status = cutReviewLabel(segment);
     card.innerHTML = `
       <div>
         <strong>${status}</strong>
@@ -2097,14 +2094,7 @@ function renderCuts() {
     card.querySelector(".cut-actions").addEventListener("click", (event) => {
       const action = event.target.dataset.action;
       if (!action) return;
-      if (action === "confirm") {
-        segment.restored = false;
-        segment.reviewStatus = segment.reviewStatus === "confirmed" ? "unreviewed" : "confirmed";
-      }
-      if (action === "restore") {
-        segment.restored = !segment.restored;
-        segment.reviewStatus = segment.restored ? "rejected" : "unreviewed";
-      }
+      Object.assign(segment, updateCutReview(segment, action));
       pushEditHistory();
       scheduleProjectPersist();
       renderAll();

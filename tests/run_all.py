@@ -13,12 +13,14 @@ COMMANDS = [
     ["node", str(ROOT / "tests" / "test_export_readiness.js")],
     ["node", str(ROOT / "tests" / "test_review_metrics.js")],
     ["node", str(ROOT / "tests" / "test_annotation_export.js")],
+    ["node", str(ROOT / "tests" / "test_cut_review.js")],
     ["node", "--check", str(ROOT / "app" / "app.js")],
     ["node", "--check", str(ROOT / "app" / "edit-formats.js")],
     ["node", "--check", str(ROOT / "app" / "highlight-selection.js")],
     ["node", "--check", str(ROOT / "app" / "export-readiness.js")],
     ["node", "--check", str(ROOT / "app" / "review-metrics.js")],
     ["node", "--check", str(ROOT / "app" / "annotation-export.js")],
+    ["node", "--check", str(ROOT / "app" / "cut-review.js")],
     ["node", "--check", str(ROOT / "app" / "server.js")],
 ]
 

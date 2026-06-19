@@ -223,12 +223,15 @@ def run():
     assert "./export-readiness.js" in html
     assert "./review-metrics.js" in html
     assert "./annotation-export.js" in html
+    assert "./cut-review.js" in html
     assert "buildExportReadiness" in app_js
     assert "renderExportReadiness" in app_js
     assert "getCutReviewStats" in app_js
     assert 'data-action="confirm"' in app_js
     assert "reviewedCutSegments" in app_js
     assert ".cut-actions" in styles
+    assert "updateCutReview" in app_js
+    assert "cutReviewLabel" in app_js
     assert "#exportReadinessList" in styles
     assert "buildCandidateReviewMetrics" in app_js
     assert "buildConfidenceBuckets" in app_js
