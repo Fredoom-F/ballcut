@@ -129,6 +129,26 @@ def run():
     assert "getSelectedHighlights" in app_js
     assert "正在导出片段" in app_js
     assert "completedSourceSeconds" in app_js
+    assert 'id="smartReframe"' in html
+    assert "getTrackingFocus" in app_js
+    assert "getExportRenderRect" in app_js
+    assert "mapExportPoint" in app_js
+    assert "智能跟拍裁切" in app_js
+    assert "getContainedRect" in app_js
+    assert "getCanvasVideoRect" in app_js
+    assert "drawReframeGuide" in app_js
+    assert "previewReframe" in app_js
+    assert 'id="downloadEdlBtn"' in html
+    assert "downloadEditDecisionList" in app_js
+    assert "buildEdl" in app_js
+    assert './edit-formats.js' in html
+    assert 'id="highlightDuration"' in html
+    assert './highlight-selection.js' in html
+    assert "selectByDuration" in app_js
+    assert 'id="capabilityDisclosure"' in html
+    assert "renderCapabilityDisclosure" in app_js
+    assert "analysisCapabilities" in app_js
+    assert ".capability-disclosure" in styles
     print("Frontend timeline playhead contract passed.")
 
 

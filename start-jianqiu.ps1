@@ -11,7 +11,7 @@ $stdoutLog = Join-Path $runtimeRoot "server.log"
 $stderrLog = Join-Path $runtimeRoot "server-error.log"
 $pidFile = Join-Path $runtimeRoot "server.pid"
 $healthUrl = "http://127.0.0.1:4173/health"
-$expectedVersion = "0.3.0"
+$expectedVersion = "0.3.1"
 
 function Test-JianqiuService {
     try {

@@ -59,6 +59,16 @@
           </label>
 
           <label>
+            精彩集锦时长
+            <select id="highlightDuration">
+              <option value="15">约 15 秒</option>
+              <option value="30" selected>约 30 秒</option>
+              <option value="60">约 60 秒</option>
+              <option value="0">不限时长</option>
+            </select>
+          </label>
+
+          <label>
             输出比例
             <select id="ratioSelect">
               <option value="source">保持原比例</option>
@@ -67,6 +77,11 @@
               <option value="1:1">1:1 方形</option>
               <option value="4:5">4:5 社媒</option>
             </select>
+          </label>
+
+          <label class="toggle">
+            <input id="smartReframe" type="checkbox" checked />
+            <span>社媒比例智能跟拍</span>
           </label>
 
           <label>
@@ -217,11 +232,19 @@
                 <button id="downloadCoverBtn" type="button">下载封面</button>
                 <button id="copyCaptionBtn" type="button">复制文案</button>
                 <button id="downloadCsvBtn" type="button">下载 CSV</button>
+                <button id="downloadEdlBtn" type="button">下载 EDL</button>
                 <button id="downloadReportBtn" type="button">下载 HTML 报告</button>
               </div>
             </div>
             <div id="trainingReportMetrics" class="training-report-metrics"></div>
             <p id="trainingReportNote"></p>
+            <div id="capabilityDisclosure" class="capability-disclosure" hidden>
+              <div>
+                <strong>本次识别能力</strong>
+                <span>明确区分已运行的判据与尚未加载的模型</span>
+              </div>
+              <div id="capabilityList"></div>
+            </div>
             <div class="shot-map-wrap">
               <div>
                 <strong>画面击球分布</strong>
@@ -280,6 +303,8 @@
       </section>
     </main>
 
+    <script src="./edit-formats.js"></script>
+    <script src="./highlight-selection.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

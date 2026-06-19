@@ -527,6 +527,72 @@ video,
   font-size: 13px;
 }
 
+.capability-disclosure {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.capability-disclosure[hidden] {
+  display: none;
+}
+
+.capability-disclosure > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.capability-disclosure > div:first-child span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#capabilityList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#capabilityList > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+  background: #14181d;
+}
+
+#capabilityList span,
+#capabilityList small {
+  display: block;
+}
+
+#capabilityList span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#capabilityList strong {
+  display: block;
+  margin-top: 3px;
+  color: #6dd9b5;
+  font-size: 13px;
+}
+
+#capabilityList .disabled strong {
+  color: #ffb0b3;
+}
+
+#capabilityList small {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .shot-map-wrap {
   margin-top: 18px;
   border-top: 1px solid var(--line);
@@ -878,6 +944,10 @@ video,
 
   #trainingComparisonMetrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #capabilityList {
+    grid-template-columns: 1fr;
   }
 
   .history-row {

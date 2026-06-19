@@ -47,8 +47,50 @@ def run():
         health_response = health_connection.getresponse()
         health = json.loads(health_response.read().decode("utf-8"))
         assert health_response.status == 200
-        assert health["version"] == "0.3.0"
+        assert health["version"] == "0.3.1"
         assert health["analyzerReady"] is True
+        assert health_response.getheader("X-Content-Type-Options") == "nosniff"
+        assert health_response.getheader("Cross-Origin-Resource-Policy") == "same-origin"
+
+        page_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        page_connection.request("GET", "/")
+        page_response = page_connection.getresponse()
+        assert page_response.status == 200
+        assert "frame-ancestors 'none'" in page_response.getheader("Content-Security-Policy")
+        assert page_response.getheader("Permissions-Policy")
+        page_response.read()
+
+        traversal_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        traversal_connection.request("GET", "/..%2F..%2Fapp%2Fserver.js")
+        traversal_response = traversal_connection.getresponse()
+        assert traversal_response.status == 403
+        assert traversal_response.getheader("X-Content-Type-Options") == "nosniff"
+        traversal_response.read()
+
+        empty_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        empty_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis",
+            body=b"",
+            headers={"Content-Type": "application/octet-stream", "Content-Length": "0"},
+        )
+        empty_response = empty_connection.getresponse()
+        assert empty_response.status == 400
+        empty_response.read()
+
+        oversized_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        oversized_connection.request(
+            "POST",
+            "/api/analyze/start?sport=tennis",
+            body=b"",
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(1024 * 1024 * 1024 + 1),
+            },
+        )
+        oversized_response = oversized_connection.getresponse()
+        assert oversized_response.status == 413
+        oversized_response.read()
 
         system_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         system_connection.request("GET", "/api/system")

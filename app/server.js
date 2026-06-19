@@ -8,10 +8,12 @@ const { spawn, spawnSync } = require("child_process");
 const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
-const serviceVersion = "0.3.0";
+const serviceVersion = "0.3.1";
 const maxUploadBytes = 1024 * 1024 * 1024;
 const maxConcurrentJobs = 2;
+const maxConcurrentUploads = 2;
 const jobs = new Map();
+let activeUploads = 0;
 const analyzerEnvironment = inspectAnalyzerEnvironment();
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -41,7 +43,8 @@ const server = http.createServer((req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store"
+        "Cache-Control": "no-store",
+        ...securityHeaders()
       });
       res.end(JSON.stringify({
         status: "ok",
@@ -85,14 +88,14 @@ const server = http.createServer((req, res) => {
 
     const target = safePath(req.url || "/");
     if (!target) {
-      res.writeHead(403);
+      res.writeHead(403, securityHeaders());
       res.end("Forbidden");
       return;
     }
 
     fs.readFile(target, (err, data) => {
       if (err) {
-        res.writeHead(404);
+        res.writeHead(404, securityHeaders());
         res.end("Not found");
         return;
       }
@@ -100,9 +103,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, {
         "Content-Type": types[path.extname(target)] || "application/octet-stream",
         "Cache-Control": "no-store",
-        "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
-        "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
+        ...securityHeaders()
       });
       res.end(data);
     });
@@ -160,6 +161,27 @@ function isTrustedLocalRequest(req) {
   const origin = req.headers.origin;
   if (!origin) return true;
   return origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}`;
+}
+
+function securityHeaders() {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Content-Security-Policy": [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self'",
+      "img-src 'self' blob: data:",
+      "media-src 'self' blob:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "frame-ancestors 'none'"
+    ].join("; ")
+  };
 }
 
 function validateUploadRequest(req, res) {
@@ -330,13 +352,27 @@ function decodeHeaderValue(value) {
 }
 
 function receiveUpload(req, res, onComplete) {
+  if (activeUploads >= maxConcurrentUploads) {
+    sendJson(res, 429, { error: "已有多个视频正在上传，请稍后再试" });
+    req.resume();
+    return;
+  }
+  activeUploads += 1;
   const requestId = crypto.randomBytes(12).toString("hex");
   const tempPath = path.join(os.tmpdir(), `jianqiu-${requestId}.video`);
   const output = fs.createWriteStream(tempPath, { flags: "wx" });
   let received = 0;
   let aborted = false;
+  let released = false;
+
+  function releaseUpload() {
+    if (released) return;
+    released = true;
+    activeUploads = Math.max(0, activeUploads - 1);
+  }
 
   function cleanup() {
+    releaseUpload();
     output.destroy();
     fs.rm(tempPath, { force: true }, () => {});
   }
@@ -358,7 +394,15 @@ function receiveUpload(req, res, onComplete) {
 
   req.on("end", () => {
     if (aborted) return;
-    output.end(() => onComplete(tempPath, received));
+    output.end(() => {
+      releaseUpload();
+      if (!received) {
+        fs.rm(tempPath, { force: true }, () => {});
+        sendJson(res, 400, { error: "上传的视频为空" });
+        return;
+      }
+      onComplete(tempPath, received);
+    });
   });
 
   req.on("aborted", cleanup);
@@ -465,7 +509,7 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff"
+    ...securityHeaders()
   });
   res.end(JSON.stringify(payload));
 }
@@ -478,6 +522,10 @@ server.on("error", (error) => {
   }
   process.exitCode = 1;
 });
+
+server.headersTimeout = 15000;
+server.requestTimeout = 15 * 60 * 1000;
+server.keepAliveTimeout = 5000;
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`剪球本地版已启动：http://127.0.0.1:${port}/`);

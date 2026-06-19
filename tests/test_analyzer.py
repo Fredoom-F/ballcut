@@ -49,6 +49,10 @@ def run():
     assert result["quality"]["medianSharpness"] > 0
     assert result["quality"]["medianBrightness"] > 0
     assert result["quality"]["recommendations"]
+    assert result["capabilities"]["ballTracking"]["enabled"] is True
+    assert result["capabilities"]["hitDecision"]["enabled"] is True
+    assert result["capabilities"]["poseDetection"]["enabled"] is False
+    assert result["capabilities"]["racketDetection"]["enabled"] is False
     assert all("suggestedShotType" in event for event in result["events"])
 
     no_ball_fixture = ROOT / "tests" / "fixtures" / "synthetic-no-ball.avi"

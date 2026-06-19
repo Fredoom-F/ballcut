@@ -6,6 +6,8 @@ const state = {
   segments: [],
   highlights: [],
   trajectory: [],
+  analysisSource: null,
+  analysisCapabilities: null,
   analysisQuality: null,
   restored: false,
   raf: 0,
@@ -23,7 +25,8 @@ const state = {
   positionEventId: null,
   latestAnalysisStats: null,
   exporting: false,
-  selectedHistoryKey: ""
+  selectedHistoryKey: "",
+  previewReframe: { x: 0.5, y: 0.5 }
 };
 
 const sportProfiles = {
@@ -36,6 +39,8 @@ const sportProfiles = {
 };
 
 const $ = (id) => document.getElementById(id);
+const { buildEdl } = window.JianqiuEditFormats;
+const { mergeSegments, selectByDuration } = window.JianqiuHighlightSelection;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -236,15 +241,23 @@ function sampleBallColor(event) {
 
 function normalizedVideoPoint(event) {
   const rect = video.getBoundingClientRect();
+  const content = getContainedRect(
+    rect.width,
+    rect.height,
+    video.videoWidth || rect.width,
+    video.videoHeight || rect.height
+  );
+  const left = rect.left + content.x;
+  const top = rect.top + content.y;
   if (
-    event.clientX < rect.left ||
-    event.clientX > rect.right ||
-    event.clientY < rect.top ||
-    event.clientY > rect.bottom
+    event.clientX < left ||
+    event.clientX > left + content.width ||
+    event.clientY < top ||
+    event.clientY > top + content.height
   ) return null;
   return {
-    x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
-    y: clamp((event.clientY - rect.top) / rect.height, 0, 1)
+    x: clamp((event.clientX - left) / content.width, 0, 1),
+    y: clamp((event.clientY - top) / content.height, 0, 1)
   };
 }
 
@@ -485,6 +498,8 @@ function scheduleProjectPersist() {
 
 function applyAnalysisResult(result) {
   state.duration = result.duration || state.duration;
+  state.analysisSource = result.source || null;
+  state.analysisCapabilities = result.capabilities || null;
   state.events = (result.events || []).map((event) => ({
     ...event,
     reviewStatus: "unreviewed",
@@ -537,6 +552,8 @@ function selectFile(file) {
   state.segments = [];
   state.highlights = [];
   state.trajectory = [];
+  state.analysisSource = null;
+  state.analysisCapabilities = null;
   state.analysisQuality = null;
   state.ballColor = null;
   state.calibrationMode = false;
@@ -965,6 +982,8 @@ function buildRallies() {
       end: clamp(group[group.length - 1].timestamp + 2, 0, state.duration),
       hitCount: group.length,
       score: scores.reduce((sum, score) => sum + score, 0) / scores.length,
+      favorite: group.some((event) => event.favorite),
+      timestamp: group.reduce((sum, event) => sum + event.timestamp, 0) / group.length,
       events: group
     };
   });
@@ -1006,8 +1025,34 @@ function renderTrainingReport() {
     .join("，");
   if (classified) $("trainingReportNote").textContent += ` 动作分布：${classified}。`;
   renderShotMap();
+  renderCapabilityDisclosure();
   renderTrainingHistory();
   renderRallies();
+}
+
+function renderCapabilityDisclosure() {
+  const container = $("capabilityDisclosure");
+  const capabilities = state.analysisCapabilities;
+  if (!capabilities) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  const labels = {
+    ballTracking: "球轨迹",
+    cameraMotion: "镜头运动",
+    playerLocalization: "人体位置",
+    poseDetection: "人体姿态",
+    racketDetection: "球拍检测",
+    hitDecision: "击球判据"
+  };
+  $("capabilityList").innerHTML = Object.entries(capabilities).map(([key, capability]) => `
+    <div class="${capability.enabled ? "enabled" : "disabled"}">
+      <span>${labels[key] || key}</span>
+      <strong>${capability.enabled ? "已启用" : "未启用"}</strong>
+      <small>${escapeAttribute(capability.method || "")}</small>
+    </div>
+  `).join("");
 }
 
 function renderRallies() {
@@ -1684,6 +1729,27 @@ function sizeCanvasToVideo() {
   }
 }
 
+function getContainedRect(containerWidth, containerHeight, sourceWidth, sourceHeight) {
+  const scale = Math.min(containerWidth / sourceWidth, containerHeight / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  return {
+    x: (containerWidth - width) / 2,
+    y: (containerHeight - height) / 2,
+    width,
+    height
+  };
+}
+
+function getCanvasVideoRect() {
+  return getContainedRect(
+    canvas.width,
+    canvas.height,
+    video.videoWidth || canvas.width,
+    video.videoHeight || canvas.height
+  );
+}
+
 function getEffectSettings(profile) {
   const style = $("effectStyle").value;
   if (style === "energy") {
@@ -1698,8 +1764,12 @@ function getEffectSettings(profile) {
 function drawEffects() {
   sizeCanvasToVideo();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const display = getCanvasVideoRect();
   if (!state.events.length || video.paused || video.ended) {
-    state.raf = requestAnimationFrame(drawEffects);
+    drawReframeGuide(video.currentTime, display);
+    if (!video.paused && !video.ended) {
+      state.raf = requestAnimationFrame(drawEffects);
+    }
     return;
   }
 
@@ -1710,8 +1780,8 @@ function drawEffects() {
   if ($("showImpact").checked) recent.forEach((event) => {
     const age = Math.abs(event.timestamp - now);
     const pulse = 1 - age / 0.65;
-    const x = canvas.width * event.position.x;
-    const y = canvas.height * event.position.y;
+    const x = display.x + display.width * event.position.x;
+    const y = display.y + display.height * event.position.y;
     ctx.save();
     ctx.globalAlpha = pulse;
     ctx.strokeStyle = settings.color;
@@ -1740,8 +1810,8 @@ function drawEffects() {
     ctx.globalAlpha = 0.72;
     ctx.beginPath();
     trail.forEach((point, index) => {
-      const x = canvas.width * point.xNorm;
-      const y = canvas.height * point.yNorm;
+      const x = display.x + display.width * point.xNorm;
+      const y = display.y + display.height * point.yNorm;
       if (index === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
@@ -1749,8 +1819,8 @@ function drawEffects() {
     ctx.restore();
   }
   if ($("showTrajectory").checked && $("effectStyle").value !== "minimal") trail.forEach((point, index) => {
-    const x = canvas.width * point.xNorm;
-    const y = canvas.height * point.yNorm;
+    const x = display.x + display.width * point.xNorm;
+    const y = display.y + display.height * point.yNorm;
     ctx.save();
     ctx.globalAlpha = (index + 1) / Math.max(2, trail.length + 2);
     ctx.fillStyle = settings.color;
@@ -1760,7 +1830,54 @@ function drawEffects() {
     ctx.restore();
   });
 
-  state.raf = requestAnimationFrame(drawEffects);
+  drawReframeGuide(now, display);
+  if (!video.paused && !video.ended) {
+    state.raf = requestAnimationFrame(drawEffects);
+  }
+}
+
+function drawReframeGuide(time, display) {
+  const ratio = $("ratioSelect").value;
+  if (!$("smartReframe").checked || ratio === "source" || !video.videoWidth || !video.videoHeight) return;
+  const outputAspect = {
+    "16:9": 16 / 9,
+    "9:16": 9 / 16,
+    "1:1": 1,
+    "4:5": 4 / 5
+  }[ratio];
+  if (!outputAspect) return;
+  const focus = getTrackingFocus(time);
+  state.previewReframe.x += (focus.x - state.previewReframe.x) * 0.12;
+  state.previewReframe.y += (focus.y - state.previewReframe.y) * 0.12;
+  const sourceAspect = video.videoWidth / video.videoHeight;
+  let frame = { ...display };
+  if (sourceAspect > outputAspect) {
+    frame.width = display.height * outputAspect;
+    frame.x = display.x + clamp(
+      state.previewReframe.x * display.width - frame.width / 2,
+      0,
+      display.width - frame.width
+    );
+  } else {
+    frame.height = display.width / outputAspect;
+    frame.y = display.y + clamp(
+      state.previewReframe.y * display.height - frame.height / 2,
+      0,
+      display.height - frame.height
+    );
+  }
+
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.38)";
+  ctx.fillRect(display.x, display.y, display.width, Math.max(0, frame.y - display.y));
+  ctx.fillRect(display.x, frame.y + frame.height, display.width, Math.max(0, display.y + display.height - frame.y - frame.height));
+  ctx.fillRect(display.x, frame.y, Math.max(0, frame.x - display.x), frame.height);
+  ctx.fillRect(frame.x + frame.width, frame.y, Math.max(0, display.x + display.width - frame.x - frame.width), frame.height);
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = Math.max(2, window.devicePixelRatio || 1);
+  ctx.setLineDash([10, 8]);
+  ctx.strokeRect(frame.x, frame.y, frame.width, frame.height);
+  ctx.restore();
 }
 
 function skipRemovedSegments() {
@@ -1803,6 +1920,8 @@ function makeDecisionPayload() {
     highlights: state.highlights
     ,
     trajectory: state.trajectory,
+    source: state.analysisSource,
+    capabilities: state.analysisCapabilities,
     analysis_quality: state.analysisQuality,
     training_summary: state.analysisQuality ? buildTrainingSummary() : null
   };
@@ -1954,6 +2073,8 @@ async function importProjectFile(file) {
       restored: Boolean(segment.restored)
     }));
     state.trajectory = payload.trajectory;
+    state.analysisSource = payload.source || null;
+    state.analysisCapabilities = payload.capabilities || null;
     state.analysisQuality = payload.analysis_quality || {
       coverage: state.duration ? payload.trajectory.length / Math.max(1, state.duration * 12) : 0,
       recommendations: ["该结果来自导入项目，请按需要复核击球候选"]
@@ -1974,6 +2095,8 @@ async function importProjectFile(file) {
       segments: state.segments,
       highlights: state.highlights,
       trajectory: state.trajectory,
+      source: state.analysisSource,
+      capabilities: state.analysisCapabilities,
       quality: state.analysisQuality
     }).catch(() => {});
     scheduleProjectPersist();
@@ -2164,6 +2287,31 @@ function downloadTrainingCsv() {
   );
 }
 
+function downloadEditDecisionList() {
+  if (!state.file || !state.duration) return;
+  const segments = getExportSegments();
+  if (!segments.length) {
+    setLog(["没有可写入 EDL 的保留片段。", "请调整剪辑目标或恢复需要保留的片段。"]);
+    return;
+  }
+  const title = state.file.name.replace(/\.[^.]+$/, "").slice(0, 80);
+  const edl = buildEdl({
+    title,
+    fileName: state.file.name,
+    segments,
+    measuredFrameRate: state.analysisSource?.fps
+  });
+  downloadText(
+    `jianqiu-${Date.now()}.edl`,
+    edl.text,
+    "text/plain;charset=utf-8"
+  );
+  setLog([
+    "EDL 剪辑清单已下载。",
+    `共 ${segments.length} 段，按 ${edl.frameRate}fps 非丢帧时间码生成，可导入专业剪辑软件继续精修。`
+  ]);
+}
+
 async function exportPreview() {
   if (!state.file || !state.duration || state.exporting) return;
   state.exporting = true;
@@ -2207,9 +2355,13 @@ async function exportPreview() {
 
   const totalExportSeconds = kept.reduce((sum, segment) => sum + segment.end - segment.start, 0);
   const exportStartedAt = performance.now();
+  const reframeState = { x: 0.5, y: 0.5 };
   setLog([
     "正在导出带水印预览。",
-    `预计约 ${formatRemaining(totalExportSeconds).replace("预计剩余 ", "")}，${audioIncluded ? "已保留原声音轨" : "当前浏览器将导出静音视频"}。`
+    `预计约 ${formatRemaining(totalExportSeconds).replace("预计剩余 ", "")}，${audioIncluded ? "已保留原声音轨" : "当前浏览器将导出静音视频"}。`,
+    $("smartReframe").checked && ratio !== "source"
+      ? "已启用球轨迹智能跟拍裁切。"
+      : "使用固定画幅导出。"
   ]);
   recorder.start();
 
@@ -2217,7 +2369,7 @@ async function exportPreview() {
   for (const segment of kept) {
     await waitForSeek(exportVideo, segment.start);
     await exportVideo.play();
-    await drawExportSegment(exportVideo, outCtx, out, segment.start, segment.end, (segmentProgress) => {
+    await drawExportSegment(exportVideo, outCtx, out, segment.start, segment.end, reframeState, (segmentProgress) => {
       const currentSourceSeconds =
         completedSourceSeconds + (segment.end - segment.start) * segmentProgress;
       const progress = clamp(currentSourceSeconds / totalExportSeconds, 0, 1);
@@ -2361,31 +2513,102 @@ function getOutputSize(sourceW, sourceH, ratio) {
   return { width: Math.round(sourceW * scale), height: Math.round(sourceH * scale) };
 }
 
+function getTrackingFocus(time) {
+  const nearbyTrajectory = state.trajectory.filter((point) => Math.abs(point.time - time) <= 0.75);
+  if (nearbyTrajectory.length) {
+    const weighted = nearbyTrajectory.reduce((result, point) => {
+      const weight = 1 - Math.min(0.9, Math.abs(point.time - time) / 0.85);
+      result.x += point.xNorm * weight;
+      result.y += point.yNorm * weight;
+      result.weight += weight;
+      return result;
+    }, { x: 0, y: 0, weight: 0 });
+    return {
+      x: weighted.x / weighted.weight,
+      y: weighted.y / weighted.weight
+    };
+  }
+  const nearestEvent = getActiveEvents()
+    .filter((event) => event.position && Math.abs(event.timestamp - time) <= 3)
+    .sort((a, b) => Math.abs(a.timestamp - time) - Math.abs(b.timestamp - time))[0];
+  return nearestEvent?.position || { x: 0.5, y: 0.5 };
+}
+
+function getExportRenderRect(exportVideo, out, time, reframeState) {
+  const sourceWidth = exportVideo.videoWidth;
+  const sourceHeight = exportVideo.videoHeight;
+  const shouldCrop = $("smartReframe").checked && $("ratioSelect").value !== "source";
+  if (!shouldCrop) {
+    const scale = Math.min(out.width / sourceWidth, out.height / sourceHeight);
+    const width = sourceWidth * scale;
+    const height = sourceHeight * scale;
+    return {
+      sx: 0,
+      sy: 0,
+      sw: sourceWidth,
+      sh: sourceHeight,
+      dx: (out.width - width) / 2,
+      dy: (out.height - height) / 2,
+      dw: width,
+      dh: height
+    };
+  }
+
+  const focus = getTrackingFocus(time);
+  reframeState.x += (focus.x - reframeState.x) * 0.075;
+  reframeState.y += (focus.y - reframeState.y) * 0.075;
+  const outputAspect = out.width / out.height;
+  const sourceAspect = sourceWidth / sourceHeight;
+  if (sourceAspect > outputAspect) {
+    const cropWidth = sourceHeight * outputAspect;
+    return {
+      sx: clamp(reframeState.x * sourceWidth - cropWidth / 2, 0, sourceWidth - cropWidth),
+      sy: 0,
+      sw: cropWidth,
+      sh: sourceHeight,
+      dx: 0,
+      dy: 0,
+      dw: out.width,
+      dh: out.height
+    };
+  }
+  const cropHeight = sourceWidth / outputAspect;
+  return {
+    sx: 0,
+    sy: clamp(reframeState.y * sourceHeight - cropHeight / 2, 0, sourceHeight - cropHeight),
+    sw: sourceWidth,
+    sh: cropHeight,
+    dx: 0,
+    dy: 0,
+    dw: out.width,
+    dh: out.height
+  };
+}
+
+function mapExportPoint(point, render, exportVideo, out) {
+  return {
+    x: render.dx + ((point.x * exportVideo.videoWidth - render.sx) / render.sw) * render.dw,
+    y: render.dy + ((point.y * exportVideo.videoHeight - render.sy) / render.sh) * render.dh
+  };
+}
+
 function mergeExportSegments(segments) {
-  if (!segments.length) return [];
-  const sorted = segments
-    .map((segment) => ({ ...segment }))
-    .sort((a, b) => a.start - b.start);
-  const merged = [sorted[0]];
-  sorted.slice(1).forEach((segment) => {
-    const previous = merged[merged.length - 1];
-    if (segment.start <= previous.end + 0.25) {
-      previous.end = Math.max(previous.end, segment.end);
-    } else {
-      merged.push(segment);
-    }
-  });
-  return merged;
+  return mergeSegments(segments);
 }
 
 function getExportSegments() {
   if ($("modeSelect").value === "highlights") {
     const threshold = getHighlightThreshold();
-    const selected = [
+    const candidates = [
       ...buildRallies().filter((rally) => rally.hitCount >= 2 && rally.score >= threshold),
-      ...state.highlights.filter((highlight) => highlight.favorite || highlight.score >= threshold)
-    ].slice(0, 12);
-    return mergeExportSegments(selected);
+      ...state.highlights
+        .filter((highlight) => highlight.favorite || highlight.score >= threshold)
+        .map((highlight) => ({
+          ...highlight,
+          timestamp: state.events.find((event) => event.id === highlight.eventId)?.timestamp
+        }))
+    ];
+    return selectByDuration(candidates, Number($("highlightDuration").value));
   }
   return getKeptSegments();
 }
@@ -2395,7 +2618,7 @@ function getRecorderOptions(candidates) {
   return mimeType ? { mimeType } : undefined;
 }
 
-function drawExportSegment(exportVideo, outCtx, out, start, end, onProgress) {
+function drawExportSegment(exportVideo, outCtx, out, start, end, reframeState, onProgress) {
   return new Promise((resolve) => {
     const profile = sportProfiles[$("sportSelect").value];
     const settings = getEffectSettings(profile);
@@ -2419,12 +2642,18 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, onProgress) {
 
       outCtx.fillStyle = "#050607";
       outCtx.fillRect(0, 0, out.width, out.height);
-      const scale = Math.min(out.width / exportVideo.videoWidth, out.height / exportVideo.videoHeight);
-      const w = exportVideo.videoWidth * scale;
-      const h = exportVideo.videoHeight * scale;
-      const x = (out.width - w) / 2;
-      const y = (out.height - h) / 2;
-      outCtx.drawImage(exportVideo, x, y, w, h);
+      const render = getExportRenderRect(exportVideo, out, exportVideo.currentTime, reframeState);
+      outCtx.drawImage(
+        exportVideo,
+        render.sx,
+        render.sy,
+        render.sw,
+        render.sh,
+        render.dx,
+        render.dy,
+        render.dw,
+        render.dh
+      );
 
       const exportTrail = state.trajectory
         .filter((point) => point.time <= exportVideo.currentTime && exportVideo.currentTime - point.time < 1.2)
@@ -2438,10 +2667,14 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, onProgress) {
         outCtx.globalAlpha = 0.76;
         outCtx.beginPath();
         exportTrail.forEach((point, index) => {
-          const trailX = x + w * point.xNorm;
-          const trailY = y + h * point.yNorm;
-          if (index === 0) outCtx.moveTo(trailX, trailY);
-          else outCtx.lineTo(trailX, trailY);
+          const mapped = mapExportPoint(
+            { x: point.xNorm, y: point.yNorm },
+            render,
+            exportVideo,
+            out
+          );
+          if (index === 0) outCtx.moveTo(mapped.x, mapped.y);
+          else outCtx.lineTo(mapped.x, mapped.y);
         });
         outCtx.stroke();
         outCtx.restore();
@@ -2452,8 +2685,7 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, onProgress) {
         .forEach((event) => {
           const pulse = 1 - Math.abs(event.timestamp - exportVideo.currentTime) / 0.6;
           if (!event.position) return;
-          const ex = x + w * event.position.x;
-          const ey = y + h * event.position.y;
+          const mapped = mapExportPoint(event.position, render, exportVideo, out);
           outCtx.save();
           outCtx.globalAlpha = pulse;
           outCtx.strokeStyle = settings.color;
@@ -2461,7 +2693,7 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, onProgress) {
           outCtx.shadowColor = settings.color;
           outCtx.shadowBlur = settings.glow;
           outCtx.beginPath();
-          outCtx.arc(ex, ey, settings.radius + 70 * (1 - pulse), 0, Math.PI * 2);
+          outCtx.arc(mapped.x, mapped.y, settings.radius + 70 * (1 - pulse), 0, Math.PI * 2);
           outCtx.stroke();
           outCtx.restore();
         });
@@ -2508,6 +2740,18 @@ $("analysisPreset").addEventListener("change", () => {
     `按本机历史速度，预计约 ${formatRemaining(getEstimatedAnalysisSeconds(state.duration, preset)).replace("预计剩余 ", "")}。`
   ]);
 });
+$("modeSelect").addEventListener("change", () => {
+  $("highlightDuration").disabled = $("modeSelect").value !== "highlights";
+});
+$("highlightDuration").disabled = $("modeSelect").value !== "highlights";
+$("ratioSelect").addEventListener("change", () => {
+  state.previewReframe = { x: 0.5, y: 0.5 };
+  drawEffects();
+});
+$("smartReframe").addEventListener("change", () => {
+  state.previewReframe = { x: 0.5, y: 0.5 };
+  drawEffects();
+});
 video.addEventListener("timeupdate", () => {
   skipRemovedSegments();
   updatePreviewPlaybackRate();
@@ -2520,7 +2764,7 @@ video.addEventListener("play", () => {
 });
 video.addEventListener("pause", () => {
   cancelAnimationFrame(state.raf);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawEffects();
 });
 
 $("analyzeBtn").addEventListener("click", generateAnalysis);
@@ -2560,6 +2804,7 @@ $("bestHighlightBtn").addEventListener("click", locateBestHighlight);
 $("downloadCoverBtn").addEventListener("click", downloadCover);
 $("copyCaptionBtn").addEventListener("click", copySocialCaption);
 $("downloadCsvBtn").addEventListener("click", downloadTrainingCsv);
+$("downloadEdlBtn").addEventListener("click", downloadEditDecisionList);
 $("shotMap").addEventListener("click", locateShotMapEvent);
 $("historyBaselineSelect").addEventListener("change", (event) => {
   state.selectedHistoryKey = event.target.value;

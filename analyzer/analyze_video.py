@@ -668,6 +668,32 @@ def analyze_video(
             if len(stable_track) >= 8
             else "没有形成稳定球轨迹。请确认运动类型、球的颜色和视频清晰度。",
         },
+        "capabilities": {
+            "ballTracking": {
+                "enabled": True,
+                "method": "OpenCV 颜色、运动与轨迹连续性",
+            },
+            "cameraMotion": {
+                "enabled": True,
+                "method": "相邻帧全局位移与运动能量",
+            },
+            "playerLocalization": {
+                "enabled": True,
+                "method": "人体尺度活动区域代理，不是姿态识别",
+            },
+            "poseDetection": {
+                "enabled": False,
+                "method": "尚未加载人体姿态模型",
+            },
+            "racketDetection": {
+                "enabled": False,
+                "method": "尚未加载球拍检测模型",
+            },
+            "hitDecision": {
+                "enabled": True,
+                "method": "轨迹方向、速度、活动邻近与镜头稳定性联合判据",
+            },
+        },
         "trajectory": stable_track,
         "events": events,
         "segments": segments,
