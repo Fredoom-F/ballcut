@@ -227,7 +227,11 @@ def run():
     assert "renderExportReadiness" in app_js
     assert "#exportReadinessList" in styles
     assert "buildCandidateReviewMetrics" in app_js
+    assert "buildConfidenceBuckets" in app_js
     assert "候选命中率" in app_js
+    assert 'id="reviewCalibration"' in html
+    assert "renderReviewCalibration" in app_js
+    assert "#reviewCalibration" in styles
     assert 'id="downloadAnnotationsBtn"' in html
     assert "buildAnnotationPayload" in app_js
     assert "downloadAnnotations" in app_js

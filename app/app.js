@@ -47,7 +47,7 @@ const $ = (id) => document.getElementById(id);
 const { buildEdl } = window.JianqiuEditFormats;
 const { mergeSegments, selectByDuration } = window.JianqiuHighlightSelection;
 const { buildExportReadiness } = window.JianqiuExportReadiness;
-const { buildCandidateReviewMetrics } = window.JianqiuReviewMetrics;
+const { buildCandidateReviewMetrics, buildConfidenceBuckets } = window.JianqiuReviewMetrics;
 const { buildAnnotationPayload } = window.JianqiuAnnotationExport;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
@@ -1325,6 +1325,7 @@ function renderTrainingReport() {
   if (classified) $("trainingReportNote").textContent += ` 动作分布：${classified}。`;
   renderDataInsights(summary);
   renderEvidenceDistribution();
+  renderReviewCalibration();
   renderShotMap();
   renderCapabilityDisclosure();
   renderExportPlan();
@@ -1378,6 +1379,22 @@ function renderEvidenceDistribution() {
       <small>${events.length} 个有效候选</small>
     </div>
   `).join("");
+}
+
+function renderReviewCalibration() {
+  const buckets = buildConfidenceBuckets(state.events);
+  $("reviewCalibration").innerHTML = buckets.map((bucket) => {
+    const precision = bucket.precision == null ? 0 : bucket.precision;
+    const display = bucket.precision == null ? "--" : `${Math.round(precision * 100)}%`;
+    return `
+      <div class="review-calibration-row">
+        <span>${bucket.label}</span>
+        <strong>${display}</strong>
+        <div class="evidence-meter"><i style="width:${precision * 100}%"></i></div>
+        <small>已复核 ${bucket.reviewed} / ${bucket.total}</small>
+      </div>
+    `;
+  }).join("");
 }
 
 function buildDataInsights(summary) {

@@ -645,6 +645,49 @@ video,
   padding-top: 14px;
 }
 
+.review-calibration-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.review-calibration-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#reviewCalibration {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.review-calibration-row {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+  background: #14181d;
+}
+
+.review-calibration-row span,
+.review-calibration-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.review-calibration-row strong {
+  display: block;
+  margin: 4px 0 6px;
+  font-size: 17px;
+}
+
 #evidenceDistribution {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1220,6 +1263,10 @@ video,
   }
 
   #exportReadinessList {
+    grid-template-columns: 1fr;
+  }
+
+  #reviewCalibration {
     grid-template-columns: 1fr;
   }
 
