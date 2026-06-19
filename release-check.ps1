@@ -27,11 +27,16 @@ Invoke-CheckedCommand "python" @("../tests/run_all.py") $appRoot
 Write-Host "2/4 Checking PowerShell scripts..."
 $parseErrors = @()
 Get-ChildItem -LiteralPath $projectRoot -Filter "*.ps1" | ForEach-Object {
+    $fileTokens = $null
+    $fileErrors = $null
     [System.Management.Automation.Language.Parser]::ParseFile(
         $_.FullName,
-        [ref]$null,
-        [ref]$parseErrors
+        [ref]$fileTokens,
+        [ref]$fileErrors
     ) | Out-Null
+    if ($fileErrors) {
+        $parseErrors += $fileErrors
+    }
 }
 if ($parseErrors.Count) {
     throw ($parseErrors | ForEach-Object { $_.Message } | Out-String)
