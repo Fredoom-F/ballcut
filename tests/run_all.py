@@ -10,9 +10,11 @@ COMMANDS = [
     [sys.executable, str(ROOT / "tests" / "test_environment.py")],
     ["node", str(ROOT / "tests" / "test_edit_formats.js")],
     ["node", str(ROOT / "tests" / "test_highlight_selection.js")],
+    ["node", str(ROOT / "tests" / "test_export_readiness.js")],
     ["node", "--check", str(ROOT / "app" / "app.js")],
     ["node", "--check", str(ROOT / "app" / "edit-formats.js")],
     ["node", "--check", str(ROOT / "app" / "highlight-selection.js")],
+    ["node", "--check", str(ROOT / "app" / "export-readiness.js")],
     ["node", "--check", str(ROOT / "app" / "server.js")],
 ]
 

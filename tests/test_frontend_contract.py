@@ -219,6 +219,13 @@ def run():
     assert "formatFileSize" in app_js
     assert "deleteTrainingHistory" in app_js
     assert 'aria-label="删除训练记录"' in app_js
+    assert 'id="exportReadinessSummary"' in html
+    assert "./export-readiness.js" in html
+    assert "buildExportReadiness" in app_js
+    assert "renderExportReadiness" in app_js
+    assert "#exportReadinessList" in styles
+    assert 'state.analysisQuality ? String(activeEvents.length) : "--"' in app_js
+    assert 'state.analysisQuality ? String(selectedHighlights.length) : "--"' in app_js
     print("Frontend timeline playhead contract passed.")
 
 

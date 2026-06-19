@@ -45,6 +45,7 @@ const sportProfiles = {
 const $ = (id) => document.getElementById(id);
 const { buildEdl } = window.JianqiuEditFormats;
 const { mergeSegments, selectByDuration } = window.JianqiuHighlightSelection;
+const { buildExportReadiness } = window.JianqiuExportReadiness;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -1278,6 +1279,7 @@ function renderTrainingReport() {
   renderShotMap();
   renderCapabilityDisclosure();
   renderExportPlan();
+  renderExportReadiness();
   renderTrainingHistory();
   renderRallies();
 }
@@ -1419,6 +1421,7 @@ function renderExportPlan() {
       pushEditHistory();
       scheduleProjectPersist();
       renderExportPlan();
+      renderExportReadiness();
     });
     row.querySelector("button").addEventListener("click", () => {
       state.reviewLoop = null;
@@ -1427,6 +1430,47 @@ function renderExportPlan() {
     });
     list.appendChild(row);
   });
+}
+
+function renderExportReadiness() {
+  const segments = getRawExportSegments().filter((segment) =>
+    !state.excludedExportKeys.has(exportSegmentKey(segment))
+  );
+  const sourceDuration = segments.reduce((sum, segment) => sum + segment.end - segment.start, 0);
+  const slowMotionEvents = $("autoSlowMotion").checked
+    ? getActiveEvents().filter((event) =>
+      segments.some((segment) => event.timestamp >= segment.start && event.timestamp <= segment.end)
+    ).length
+    : 0;
+  const review = getReviewStats();
+  const readiness = buildExportReadiness({
+    analysisReady: Boolean(state.analysisQuality),
+    totalCandidates: review.total,
+    reviewedCandidates: review.reviewed,
+    segmentCount: segments.length,
+    outputSeconds: sourceDuration + slowMotionEvents,
+    trajectoryCoverage: Number(state.analysisQuality?.coverage) || 0,
+    mediaRecorderSupported: typeof MediaRecorder !== "undefined" && typeof canvas.captureStream === "function",
+    audioRequested: $("keepAudio").checked,
+    audioSupported: typeof video.captureStream === "function"
+  });
+  const summary = $("exportReadinessSummary");
+  summary.className = readiness.level;
+  summary.textContent = readiness.level === "ready"
+    ? "已就绪"
+    : readiness.level === "error"
+      ? `${readiness.errors} 项未就绪`
+      : `${readiness.warnings} 项建议检查`;
+  $("exportReadinessList").innerHTML = readiness.items.map((item) => `
+    <div class="${item.level}">
+      <i aria-hidden="true">${item.level === "ready" ? "✓" : item.level === "error" ? "×" : "!"}</i>
+      <span>${escapeAttribute(item.label)}</span>
+      <small>${escapeAttribute(item.detail)}</small>
+    </div>
+  `).join("");
+  $("exportBtn").title = readiness.level === "ready"
+    ? "导出检查已通过"
+    : "仍可导出，建议先查看导出准备度";
 }
 
 function renderCapabilityDisclosure() {
@@ -2172,9 +2216,9 @@ function renderMetrics() {
   $("metricOriginal").textContent = state.duration ? formatTime(state.duration) : "--";
   $("metricKept").textContent = state.duration ? formatTime(kept) : "--";
   const activeEvents = getActiveEvents();
-  $("metricEvents").textContent = state.events.length ? String(activeEvents.length) : "--";
+  $("metricEvents").textContent = state.analysisQuality ? String(activeEvents.length) : "--";
   const selectedHighlights = getSelectedHighlights();
-  $("metricHighlights").textContent = state.highlights.length ? String(selectedHighlights.length) : "--";
+  $("metricHighlights").textContent = state.analysisQuality ? String(selectedHighlights.length) : "--";
 }
 
 function renderAll() {
