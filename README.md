@@ -5,6 +5,7 @@
 当前实现是本地最小价值单元：视频不会上传到外部服务器，页面和处理逻辑都运行在 `127.0.0.1`。
 
 完整启动、跨电脑接手、数据边界和验收记录见 [`docs/DELIVERY.md`](docs/DELIVERY.md)。
+当前 OpenCV 精确阈值与判据见 [`docs/ALGORITHM.md`](docs/ALGORITHM.md)。
 
 ## 环境要求
 
@@ -197,6 +198,7 @@ tests/
   test_api.py                  本地接口与临时文件测试
 docs/
   DELIVERY.md                  启动、数据边界、跨电脑接手和验收说明
+  ALGORITHM.md                 OpenCV 判据、阈值和解释边界
 ```
 
 ## 后续方向
