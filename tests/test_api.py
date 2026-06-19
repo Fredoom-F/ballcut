@@ -42,6 +42,14 @@ def run():
         wait_for_server()
         payload = FIXTURE.read_bytes()
 
+        health_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
+        health_connection.request("GET", "/health")
+        health_response = health_connection.getresponse()
+        health = json.loads(health_response.read().decode("utf-8"))
+        assert health_response.status == 200
+        assert health["version"] == "0.3.0"
+        assert health["analyzerReady"] is True
+
         system_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         system_connection.request("GET", "/api/system")
         system_response = system_connection.getresponse()

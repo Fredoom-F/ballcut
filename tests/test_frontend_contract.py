@@ -94,6 +94,41 @@ def run():
     assert "教练备注" in app_js
     assert "checkLocalAnalyzerEnvironment" in app_js
     assert "/api/system" in app_js
+    assert 'id="downloadCsvBtn"' in html
+    assert "downloadTrainingCsv" in app_js
+    assert 'id="trainingHistoryList"' in html
+    assert "historyStoreName" in app_js
+    assert "writeTrainingHistory" in app_js
+    assert "renderTrainingHistory" in app_js
+    assert 'id="historyChart"' in html
+    assert "drawHistoryChart" in app_js
+    assert 'id="historyBaselineSelect"' in html
+    assert 'id="trainingComparison"' in html
+    assert "renderTrainingComparison" in app_js
+    assert "每分钟有效击球" in app_js
+    assert ".training-comparison" in styles
+    assert 'id="rallyList"' in html
+    assert "buildRallies" in app_js
+    assert "renderRallies" in app_js
+    assert 'id="clearLocalDataBtn"' in html
+    assert "clearLocalAnalysisData" in app_js
+    assert "indexedDB.deleteDatabase" in app_js
+    assert "segment.camera" in styles
+    assert 'class="camera"' in html
+    assert "getEstimatedAnalysisSeconds" in app_js
+    assert "updateProcessingBenchmark" in app_js
+    assert "localStorage.setItem" in app_js
+    assert "validEvent" in app_js
+    assert "validSegment" in app_js
+    assert "validPoint" in app_js
+    assert "positionEventId" in app_js
+    assert "handlePlayerFrameClick" in app_js
+    assert 'data-action="relocate"' in app_js
+    assert 'id="highlightThreshold"' in html
+    assert "getHighlightThreshold" in app_js
+    assert "getSelectedHighlights" in app_js
+    assert "正在导出片段" in app_js
+    assert "completedSourceSeconds" in app_js
     print("Frontend timeline playhead contract passed.")
 
 

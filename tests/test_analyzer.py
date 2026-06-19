@@ -49,6 +49,7 @@ def run():
     assert result["quality"]["medianSharpness"] > 0
     assert result["quality"]["medianBrightness"] > 0
     assert result["quality"]["recommendations"]
+    assert all("suggestedShotType" in event for event in result["events"])
 
     no_ball_fixture = ROOT / "tests" / "fixtures" / "synthetic-no-ball.avi"
     generate_no_ball(no_ball_fixture)

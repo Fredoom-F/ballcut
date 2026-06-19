@@ -94,6 +94,11 @@
           </label>
 
           <label>
+            精彩阈值 <span id="highlightThresholdValue">70 分</span>
+            <input id="highlightThreshold" type="range" min="50" max="95" value="70" />
+          </label>
+
+          <label>
             击球识别灵敏度
             <select id="hitSensitivity">
               <option value="1">保守，减少误报</option>
@@ -146,6 +151,7 @@
           <input id="projectInput" type="file" accept="application/json,.json" hidden />
           <button id="exportBtn" disabled>导出带水印预览</button>
           <button id="decisionBtn" disabled>下载剪辑决策</button>
+          <button id="clearLocalDataBtn" class="danger-action" type="button">清除本机分析数据</button>
         </aside>
 
         <section class="mainstage">
@@ -175,6 +181,7 @@
             <div class="legend">
               <span><i class="keep"></i>保留</span>
               <span><i class="remove"></i>捡球/等待</span>
+              <span><i class="camera"></i>镜头移动</span>
               <span><i class="hit"></i>击球/关键动作</span>
               <span><i class="highlight"></i>精彩瞬间</span>
             </div>
@@ -209,6 +216,7 @@
                 <button id="bestHighlightBtn" type="button">定位最佳</button>
                 <button id="downloadCoverBtn" type="button">下载封面</button>
                 <button id="copyCaptionBtn" type="button">复制文案</button>
+                <button id="downloadCsvBtn" type="button">下载 CSV</button>
                 <button id="downloadReportBtn" type="button">下载 HTML 报告</button>
               </div>
             </div>
@@ -220,6 +228,27 @@
                 <span>按拍摄画面位置显示，不代表真实场地坐标</span>
               </div>
               <canvas id="shotMap" width="640" height="300"></canvas>
+            </div>
+            <div class="training-history-wrap">
+              <div class="training-history-head">
+                <strong>最近训练</strong>
+                <label>
+                  对比基线
+                  <select id="historyBaselineSelect" aria-label="选择训练对比基线">
+                    <option value="">暂无可对比记录</option>
+                  </select>
+                </label>
+              </div>
+              <div id="trainingComparison" class="training-comparison" hidden>
+                <div id="trainingComparisonMetrics"></div>
+                <p id="trainingComparisonNote"></p>
+              </div>
+              <canvas id="historyChart" width="640" height="180"></canvas>
+              <div id="trainingHistoryList"></div>
+            </div>
+            <div class="rally-list-wrap">
+              <strong>回合列表</strong>
+              <div id="rallyList"></div>
             </div>
           </section>
         </section>

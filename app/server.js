@@ -8,6 +8,7 @@ const { spawn, spawnSync } = require("child_process");
 const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
+const serviceVersion = "0.3.0";
 const maxUploadBytes = 1024 * 1024 * 1024;
 const maxConcurrentJobs = 2;
 const jobs = new Map();
@@ -45,6 +46,7 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({
         status: "ok",
         service: "jianqiu",
+        version: serviceVersion,
         port,
         analyzerReady: analyzerEnvironment.ready
       }));
@@ -479,7 +481,7 @@ server.on("error", (error) => {
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`剪球本地版已启动：http://127.0.0.1:${port}/`);
-  console.log("请保持此窗口开启。关闭窗口会停止本地服务。");
+  console.log(`服务版本 ${serviceVersion}，仅监听本机地址。`);
 });
 
 for (const file of fs.readdirSync(os.tmpdir())) {

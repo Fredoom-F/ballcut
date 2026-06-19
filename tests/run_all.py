@@ -7,6 +7,7 @@ COMMANDS = [
     [sys.executable, str(ROOT / "tests" / "test_analyzer.py")],
     [sys.executable, str(ROOT / "tests" / "test_api.py")],
     [sys.executable, str(ROOT / "tests" / "test_frontend_contract.py")],
+    [sys.executable, str(ROOT / "tests" / "test_environment.py")],
     ["node", "--check", str(ROOT / "app" / "app.js")],
     ["node", "--check", str(ROOT / "app" / "server.js")],
 ]

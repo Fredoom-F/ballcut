@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -274,6 +275,11 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sens
             0,
             0.96,
         )
+        suggested_shot_type = "serve" if (
+            speed_after > speed_before * 2.0
+            and center["yNorm"] <= 0.62
+            and sport in {"tennis", "badminton"}
+        ) else "unclassified"
 
         event = {
             "id": f"event_{len(events) + 1}",
@@ -283,6 +289,7 @@ def detect_events(track, sample_fps, frame_diagonal, sport, motion_samples, sens
             "confidence": round(confidence, 3),
             "score": round(confidence, 3),
             "position": {"x": center["xNorm"], "y": center["yNorm"]},
+            "suggestedShotType": suggested_shot_type,
             "evidence": {
                 "directionChangeDegrees": round(math.degrees(math.acos(clamp(direction_cosine, -1, 1))), 1),
                 "speedBeforePxPerSec": round(speed_before, 1),
@@ -338,6 +345,18 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
         return [{"id": "keep_0", "start": 0, "end": round(duration, 3), "type": "keep"}]
 
     minimum_idle = {1: 10.0, 2: 6.5, 3: 4.0}.get(strength, 6.5)
+
+    def removal_reason(start, end):
+        samples = [sample for sample in motion_samples if start <= sample["time"] <= end]
+        if not samples:
+            return "低运动量且未追踪到球"
+        unstable_ratio = sum(
+            1
+            for sample in samples
+            if sample["cameraShift"] > 2.0 or sample["energy"] > 0.32
+        ) / len(samples)
+        return "镜头移动或拍摄中断" if unstable_ratio >= 0.28 else "低运动量且未追踪到球"
+
     segments = []
     cursor = 0.0
     segment_index = 0
@@ -349,7 +368,7 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
                     "start": round(cursor, 3),
                     "end": region["start"],
                     "type": "remove",
-                    "reason": "低运动量且未追踪到球",
+                    "reason": removal_reason(cursor, region["start"]),
                 }
             )
             segment_index += 1
@@ -381,7 +400,7 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
                 "start": round(cursor, 3),
                 "end": round(duration, 3),
                 "type": "remove",
-                "reason": "低运动量且未追踪到球",
+                "reason": removal_reason(cursor, duration),
             }
         )
     elif cursor < duration:
@@ -393,7 +412,31 @@ def build_segments(duration, track, events, motion_samples, strength, frame_diag
                 "type": "keep",
             }
         )
-    return segments
+    compacted = []
+    index = 0
+    while index < len(segments):
+        if (
+            index + 2 < len(segments)
+            and segments[index]["type"] == "remove"
+            and segments[index + 1]["type"] == "keep"
+            and segments[index + 2]["type"] == "remove"
+            and segments[index + 1]["end"] - segments[index + 1]["start"] <= 2.0
+            and not any(
+                segments[index + 1]["start"] <= event["timestamp"] <= segments[index + 1]["end"]
+                for event in events
+            )
+        ):
+            compacted.append(
+                {
+                    **segments[index],
+                    "end": segments[index + 2]["end"],
+                }
+            )
+            index += 3
+        else:
+            compacted.append(segments[index])
+            index += 1
+    return compacted
 
 
 def analyze_video(
@@ -410,9 +453,14 @@ def analyze_video(
     config = {**base_config, "ranges": list(base_config["ranges"])}
     if ball_rgb:
         config["ranges"] = ranges_from_rgb(ball_rgb)
-    capture = cv2.VideoCapture(str(path))
+    use_msmf = os.name == "nt" and Path(path).suffix.lower() in {".mp4", ".mov", ".m4v"}
+    capture = cv2.VideoCapture(str(path), cv2.CAP_MSMF) if use_msmf else cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        capture.release()
+        capture = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
     if not capture.isOpened():
         raise RuntimeError("无法读取视频文件")
+    capture_backend = capture.getBackendName()
 
     source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -606,6 +654,7 @@ def analyze_video(
             "width": width,
             "height": height,
             "sampleFps": round(sample_fps, 3),
+            "backend": capture_backend,
         },
         "quality": {
             "trackedPoints": len(stable_track),
