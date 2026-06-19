@@ -8,7 +8,7 @@ const { spawn, spawnSync } = require("child_process");
 const root = __dirname;
 const projectRoot = path.resolve(root, "..");
 const port = Number(process.env.PORT || 4173);
-const serviceVersion = "0.4.0";
+const serviceVersion = "0.4.2";
 const maxUploadBytes = 1024 * 1024 * 1024;
 const maxConcurrentJobs = 2;
 const maxConcurrentUploads = 2;
@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (requestUrl.pathname === "/api/system" && req.method === "GET") {
-      sendJson(res, 200, analyzerEnvironment);
+      sendJson(res, 200, { ...analyzerEnvironment, serviceVersion });
       return;
     }
 
@@ -362,7 +362,11 @@ function receiveUpload(req, res, onComplete) {
   }
   activeUploads += 1;
   const requestId = crypto.randomBytes(12).toString("hex");
-  const tempPath = path.join(os.tmpdir(), `jianqiu-${requestId}.video`);
+  const originalName = decodeHeaderValue(req.headers["x-jianqiu-file-name"]);
+  const requestedExtension = path.extname(originalName).toLowerCase();
+  const allowedExtensions = new Set([".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"]);
+  const extension = allowedExtensions.has(requestedExtension) ? requestedExtension : ".video";
+  const tempPath = path.join(os.tmpdir(), `jianqiu-${requestId}${extension}`);
   const output = fs.createWriteStream(tempPath, { flags: "wx" });
   let received = 0;
   let aborted = false;
@@ -397,7 +401,8 @@ function receiveUpload(req, res, onComplete) {
 
   req.on("end", () => {
     if (aborted) return;
-    output.end(() => {
+    output.once("close", () => {
+      if (aborted) return;
       releaseUpload();
       if (!received) {
         fs.rm(tempPath, { force: true }, () => {});
@@ -406,6 +411,7 @@ function receiveUpload(req, res, onComplete) {
       }
       onComplete(tempPath, received);
     });
+    output.end();
   });
 
   req.on("aborted", cleanup);
@@ -538,7 +544,7 @@ server.listen(port, "127.0.0.1", () => {
 });
 
 for (const file of fs.readdirSync(os.tmpdir())) {
-  if (file.startsWith("jianqiu-") && file.endsWith(".video")) {
+  if (/^jianqiu-[a-f0-9]{24}\.(video|mp4|mov|m4v|avi|webm|mkv)$/i.test(file)) {
     fs.rm(path.join(os.tmpdir(), file), { force: true }, () => {});
   }
 }

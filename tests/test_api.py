@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -7,7 +8,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "tests" / "fixtures" / "synthetic-tennis.avi"
+FIXTURE = Path(tempfile.gettempdir()) / f"ballcut-api-fixture-{os.getpid()}.avi"
 sys.path.insert(0, str(ROOT))
 
 
@@ -33,7 +34,7 @@ def run():
     process = subprocess.Popen(
         ["node", "server.js"],
         cwd=ROOT / "app",
-        env={**dict(__import__("os").environ), **environment},
+        env={**dict(os.environ), **environment},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -47,7 +48,7 @@ def run():
         health_response = health_connection.getresponse()
         health = json.loads(health_response.read().decode("utf-8"))
         assert health_response.status == 200
-        assert health["version"] == "0.4.0"
+        assert health["version"] == "0.4.2"
         assert health["analyzerReady"] is True
         assert health_response.getheader("X-Content-Type-Options") == "nosniff"
         assert health_response.getheader("Cross-Origin-Resource-Policy") == "same-origin"
@@ -110,6 +111,7 @@ def run():
         assert system_response.status == 200
         assert system_state["ready"] is True
         assert system_state["opencv"]
+        assert system_state["serviceVersion"] == "0.4.2"
 
         cross_origin_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         cross_origin_connection.request(
@@ -142,7 +144,11 @@ def run():
             "POST",
             "/api/analyze?sport=tennis&strength=3",
             body=payload,
-            headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(payload))},
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(payload)),
+                "X-Jianqiu-File-Name": "synthetic-tennis.avi",
+            },
         )
         response = connection.getresponse()
         body = response.read().decode("utf-8")
@@ -157,7 +163,11 @@ def run():
             "POST",
             "/api/analyze/start?sport=tennis&strength=3",
             body=payload,
-            headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(payload))},
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(payload)),
+                "X-Jianqiu-File-Name": "synthetic-tennis.avi",
+            },
         )
         async_response = async_connection.getresponse()
         async_body = async_response.read().decode("utf-8")
@@ -222,7 +232,11 @@ def run():
         cancelled_status = json.loads(cancelled_status_response.read().decode("utf-8"))
         assert cancelled_status["status"] == "cancelled", cancelled_status
 
-        leftovers = list(Path(tempfile.gettempdir()).glob("jianqiu-*.video"))
+        leftovers = [
+            item
+            for item in Path(tempfile.gettempdir()).glob("jianqiu-*")
+            if item.suffix.lower() in {".video", ".mp4", ".mov", ".m4v", ".avi", ".webm", ".mkv"}
+        ]
         assert not leftovers, f"temporary uploads were not deleted: {leftovers}"
         print(
             json.dumps(
@@ -248,6 +262,7 @@ def run():
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
+        FIXTURE.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

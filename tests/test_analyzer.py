@@ -111,6 +111,29 @@ def run():
             assert preset_matches >= 4
     print(json.dumps({"analysis_presets": preset_metrics}, ensure_ascii=False, indent=2))
 
+    camera_metrics = {}
+    for camera_angle in ("baseline", "sideline", "handheld"):
+        camera_result = analyze_video(
+            fixture,
+            sport="tennis",
+            strength=2,
+            sensitivity=2,
+            preset="fast",
+            camera_angle=camera_angle,
+        )
+        camera_events = [event["timestamp"] for event in camera_result["events"]]
+        camera_matched = sum(
+            nearest_error(camera_events, expected) <= 0.55
+            for expected in HIT_TIMES
+        )
+        camera_metrics[camera_angle] = {
+            "events": [round(value, 2) for value in camera_events],
+            "matched_hits": camera_matched,
+        }
+        assert camera_matched >= len(HIT_TIMES) - 1, camera_metrics[camera_angle]
+        assert len(camera_events) <= len(HIT_TIMES) + 2, camera_metrics[camera_angle]
+    print(json.dumps({"camera_profiles": camera_metrics}, ensure_ascii=False, indent=2))
+
 
 if __name__ == "__main__":
     run()

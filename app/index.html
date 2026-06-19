@@ -89,6 +89,11 @@
             </select>
           </label>
 
+          <label>
+            视频署名
+            <input id="creatorName" type="text" maxlength="40" placeholder="剪球 AI Preview" />
+          </label>
+
           <label class="toggle">
             <input id="smartReframe" type="checkbox" checked />
             <span>社媒比例智能跟拍</span>
@@ -181,6 +186,7 @@
           <input id="projectInput" type="file" accept="application/json,.json" hidden />
           <button id="exportBtn" disabled>导出带水印预览</button>
           <button id="decisionBtn" disabled>下载剪辑决策</button>
+          <button id="retryEnvironmentBtn" type="button">重新检查本地服务</button>
           <button id="clearLocalDataBtn" class="danger-action" type="button">清除本机分析数据</button>
         </aside>
 
@@ -188,7 +194,7 @@
           <div class="player-frame">
             <video id="sourceVideo" playsinline controls></video>
             <canvas id="effectCanvas"></canvas>
-            <div class="watermark">剪球 AI Preview</div>
+            <div id="previewWatermark" class="watermark">剪球 AI Preview</div>
           </div>
 
           <div class="status-row">
@@ -199,6 +205,8 @@
             <div class="playback-tools">
               <button id="previousEventBtn" type="button" disabled title="上一个击球">◀</button>
               <button id="nextEventBtn" type="button" disabled title="下一个击球">▶</button>
+              <button id="previousFrameBtn" type="button" disabled title="上一帧">−1f</button>
+              <button id="nextFrameBtn" type="button" disabled title="下一帧">+1f</button>
               <label>
                 复核速度
                 <select id="reviewPlaybackRate" aria-label="复核播放速度">
@@ -280,6 +288,10 @@
             <div class="data-insights-wrap">
               <strong>数据提示</strong>
               <div id="dataInsights"></div>
+            </div>
+            <div class="evidence-distribution-wrap">
+              <strong>识别证据分布</strong>
+              <div id="evidenceDistribution"></div>
             </div>
             <div id="capabilityDisclosure" class="capability-disclosure" hidden>
               <div>

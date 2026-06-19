@@ -528,11 +528,19 @@ def analyze_video(
     if ball_rgb:
         config["ranges"] = ranges_from_rgb(ball_rgb)
     use_msmf = os.name == "nt" and Path(path).suffix.lower() in {".mp4", ".mov", ".m4v"}
-    capture = cv2.VideoCapture(str(path), cv2.CAP_MSMF) if use_msmf else cv2.VideoCapture(str(path))
-    if not capture.isOpened():
-        capture.release()
-        capture = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
-    if not capture.isOpened():
+    capture = None
+    backends = [cv2.CAP_MSMF, cv2.CAP_FFMPEG] if use_msmf else [cv2.CAP_FFMPEG, cv2.CAP_ANY]
+    for attempt in range(3):
+        for backend in backends:
+            candidate = cv2.VideoCapture(str(path), backend)
+            if candidate.isOpened():
+                capture = candidate
+                break
+            candidate.release()
+        if capture is not None:
+            break
+        time.sleep(0.25 * (attempt + 1))
+    if capture is None or not capture.isOpened():
         raise RuntimeError("无法读取视频文件")
     capture_backend = capture.getBackendName()
 

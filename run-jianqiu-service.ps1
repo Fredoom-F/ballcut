@@ -1,11 +1,6 @@
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$ProjectRoot,
-    [Parameter(Mandatory = $true)]
-    [string]$RuntimeRoot
-)
-
 $ErrorActionPreference = "Stop"
+$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RuntimeRoot = Join-Path $env:LOCALAPPDATA "Jianqiu"
 $appRoot = Join-Path $ProjectRoot "app"
 $stopFile = Join-Path $RuntimeRoot "stop.requested"
 $nodePidFile = Join-Path $RuntimeRoot "node.pid"

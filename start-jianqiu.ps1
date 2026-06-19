@@ -7,21 +7,31 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appRoot = Join-Path $projectRoot "app"
 $runtimeRoot = Join-Path $env:LOCALAPPDATA "Jianqiu"
-$stdoutLog = Join-Path $runtimeRoot "server.log"
 $stderrLog = Join-Path $runtimeRoot "server-error.log"
 $pidFile = Join-Path $runtimeRoot "server.pid"
 $nodePidFile = Join-Path $runtimeRoot "node.pid"
 $stopFile = Join-Path $runtimeRoot "stop.requested"
 $healthUrl = "http://127.0.0.1:4173/health"
-$expectedVersion = "0.4.0"
+$expectedVersion = "0.4.2"
 
 function Test-JianqiuService {
     try {
         $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 2
-        return $health.status -eq "ok" -and
+        if (-not (
+            $health.status -eq "ok" -and
             $health.service -eq "jianqiu" -and
             $health.version -eq $expectedVersion -and
             $health.analyzerReady -eq $true
+        )) {
+            return $false
+        }
+        if (-not (Test-Path -LiteralPath $pidFile)) {
+            return $false
+        }
+        $watchdogPid = Get-Content -LiteralPath $pidFile -ErrorAction Stop
+        $watchdog = Get-CimInstance Win32_Process -Filter "ProcessId = $watchdogPid" -ErrorAction Stop
+        return $watchdog.Name -eq "powershell.exe" -and
+            $watchdog.CommandLine -match "run-jianqiu-service\.ps1"
     } catch {
         return $false
     }
@@ -66,15 +76,11 @@ if ($listener) {
 
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 Remove-Item -LiteralPath $stopFile -Force -ErrorAction SilentlyContinue
+$watchdogScript = Join-Path $projectRoot "run-jianqiu-service.ps1"
+$watchdogArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$watchdogScript`""
 $process = Start-Process `
     -FilePath "powershell.exe" `
-    -ArgumentList @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $projectRoot "run-jianqiu-service.ps1"),
-        "-ProjectRoot", $projectRoot,
-        "-RuntimeRoot", $runtimeRoot
-    ) `
+    -ArgumentList $watchdogArguments `
     -WorkingDirectory $projectRoot `
     -WindowStyle Hidden `
     -PassThru

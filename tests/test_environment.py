@@ -25,8 +25,10 @@ def run():
     assert "expectedVersion" in background_start_script
     assert "LOCALAPPDATA" in background_start_script
     assert "run-jianqiu-service.ps1" in background_start_script
+    assert "run-jianqiu-service\\.ps1" in background_start_script
     assert "node.WaitForExit()" in watchdog_script
     assert "restarting" in watchdog_script
+    assert "MyInvocation.MyCommand.Path" in watchdog_script
     print(f"Environment ready: OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
 
 

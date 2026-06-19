@@ -15,6 +15,7 @@ const state = {
   analysisJobId: null,
   analysisRequest: null,
   analysisPollTimer: 0,
+  environmentReady: false,
   ballColor: null,
   calibrationMode: false,
   currentCacheKey: null,
@@ -59,6 +60,7 @@ const preferenceControlIds = [
   "modeSelect",
   "highlightDuration",
   "ratioSelect",
+  "creatorName",
   "smartReframe",
   "effectStyle",
   "showTrajectory",
@@ -81,6 +83,14 @@ function formatTime(seconds) {
   const min = Math.floor(safe / 60);
   const sec = Math.floor(safe % 60);
   return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function getBrandLabel() {
+  return $("creatorName").value.trim().slice(0, 40) || "剪球 AI Preview";
+}
+
+function updateBrandUi() {
+  $("previewWatermark").textContent = getBrandLabel();
 }
 
 function clamp(value, min, max) {
@@ -139,23 +149,33 @@ function loadEditorPreferences() {
   $("highlightDuration").disabled = $("modeSelect").value !== "highlights";
 }
 
-async function checkLocalAnalyzerEnvironment() {
+async function checkLocalAnalyzerEnvironment(announce = false) {
   try {
     const response = await fetch("/api/system", { cache: "no-store" });
     const environment = await response.json();
-    if (!environment.ready) {
+    if (!response.ok || !environment.ready) {
+      state.environmentReady = false;
       $("analyzeBtn").disabled = true;
       setLog([
         "本地 OpenCV 环境尚未就绪。",
         environment.error || "缺少 Python、OpenCV 或 NumPy。",
         environment.installCommand || "python -m pip install opencv-python numpy"
       ]);
-      return;
+      return false;
     }
+    state.environmentReady = true;
+    $("analyzeBtn").disabled = !state.file || state.analyzing;
     document.querySelector(".privacy-pill").textContent =
-      `本地处理 · Python ${environment.python} · OpenCV ${environment.opencv}`;
+      `本地处理 · 服务 ${environment.serviceVersion} · Python ${environment.python} · OpenCV ${environment.opencv}`;
+    if (announce) {
+      setLog(["本地服务连接正常。", `OpenCV ${environment.opencv} 已就绪，可以继续分析。`]);
+    }
+    return true;
   } catch {
+    state.environmentReady = false;
+    $("analyzeBtn").disabled = true;
     setLog(["无法读取本地分析环境状态，请确认剪球服务仍在运行。"]);
+    return false;
   }
 }
 
@@ -621,7 +641,7 @@ function selectFile(file) {
   state.url = URL.createObjectURL(file);
   video.src = state.url;
   $("fileName").textContent = file.name;
-  $("analyzeBtn").disabled = false;
+  $("analyzeBtn").disabled = !state.environmentReady;
   $("exportBtn").disabled = true;
   $("decisionBtn").disabled = true;
   $("restoreBtn").disabled = true;
@@ -636,6 +656,8 @@ function selectFile(file) {
   state.timelineViewportStart = 0;
   $("previousEventBtn").disabled = true;
   $("nextEventBtn").disabled = true;
+  $("previousFrameBtn").disabled = false;
+  $("nextFrameBtn").disabled = false;
   $("calibrateBallBtn").disabled = false;
   state.events = [];
   state.segments = [];
@@ -660,6 +682,10 @@ function selectFile(file) {
 
 async function generateAnalysis() {
   if (!state.file || state.analyzing) return;
+  if (!state.environmentReady) {
+    await checkLocalAnalyzerEnvironment(true);
+    if (!state.environmentReady) return;
+  }
   const sport = $("sportSelect").value;
   const profile = sportProfiles[sport];
   const strength = Number($("cutStrength").value);
@@ -758,7 +784,7 @@ async function generateAnalysis() {
     state.analysisJobId = null;
     sessionStorage.removeItem(activeJobStorageKey);
     state.analyzing = false;
-    $("analyzeBtn").disabled = false;
+    $("analyzeBtn").disabled = !state.environmentReady;
     $("analyzeBtn").textContent = "开始本地分析";
     hideAnalysisProgress();
   }
@@ -852,7 +878,7 @@ async function resumeActiveAnalysis() {
     state.analyzing = false;
     sessionStorage.removeItem(activeJobStorageKey);
     hideAnalysisProgress();
-    $("analyzeBtn").disabled = !state.file;
+    $("analyzeBtn").disabled = !state.file || !state.environmentReady;
   }
 }
 
@@ -1185,11 +1211,59 @@ function renderTrainingReport() {
     .join("，");
   if (classified) $("trainingReportNote").textContent += ` 动作分布：${classified}。`;
   renderDataInsights(summary);
+  renderEvidenceDistribution();
   renderShotMap();
   renderCapabilityDisclosure();
   renderExportPlan();
   renderTrainingHistory();
   renderRallies();
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function renderEvidenceDistribution() {
+  const events = getActiveEvents();
+  const metrics = [
+    {
+      label: "置信度中位数",
+      value: median(events.map((event) => Number(event.confidence) || 0)),
+      display: (value) => `${Math.round(value * 100)}%`,
+      maximum: 1
+    },
+    {
+      label: "方向变化中位数",
+      value: median(events.map((event) => Number(event.evidence?.directionChangeDegrees) || 0)),
+      display: (value) => `${Math.round(value)}°`,
+      maximum: 180
+    },
+    {
+      label: "击球后画面球速",
+      value: median(events.map((event) => Number(event.evidence?.speedAfterPxPerSec) || 0)),
+      display: (value) => `${Math.round(value)} px/s`,
+      maximum: 650
+    },
+    {
+      label: "轨迹连续度",
+      value: median(events.map((event) => Number(event.evidence?.trackContinuity) || 0)),
+      display: (value) => `${Math.round(value * 100)}%`,
+      maximum: 1
+    }
+  ];
+  $("evidenceDistribution").innerHTML = metrics.map((metric) => `
+    <div class="evidence-metric">
+      <span>${metric.label}</span>
+      <strong>${events.length ? metric.display(metric.value) : "--"}</strong>
+      <div class="evidence-meter"><i style="width:${events.length ? clamp(metric.value / metric.maximum, 0, 1) * 100 : 0}%"></i></div>
+      <small>${events.length} 个有效候选</small>
+    </div>
+  `).join("");
 }
 
 function buildDataInsights(summary) {
@@ -1377,7 +1451,7 @@ async function renderTrainingHistory() {
     <div class="history-row">
       <strong>${escapeAttribute(item.fileName)}</strong>
       <span>${new Date(item.updatedAt).toLocaleDateString("zh-CN")}</span>
-      <span>击球 ${item.summary.activeEvents}</span>
+      <span>击球 ${item.summary.activeEvents} · ${item.summary.duration ? (item.summary.activeEvents / (item.summary.duration / 60)).toFixed(1) : "0.0"}/分</span>
       <span>连续 ${item.summary.longestSequence}</span>
       <span>有效 ${Math.round(item.summary.keptRatio * 100)}%</span>
     </div>
@@ -1479,13 +1553,16 @@ function drawHistoryChart(history) {
     return;
   }
 
-  const maximumHits = Math.max(1, ...history.map((item) => item.summary.activeEvents));
+  const hitRate = (item) => item.summary.duration
+    ? item.summary.activeEvents / (item.summary.duration / 60)
+    : 0;
+  const maximumHits = Math.max(1, ...history.map(hitRate));
   const pointFor = (item, index, key) => {
     const x = history.length === 1
       ? chart.width / 2
       : 34 + (index / (history.length - 1)) * (chart.width - 54);
     const ratio = key === "hits"
-      ? item.summary.activeEvents / maximumHits
+      ? hitRate(item) / maximumHits
       : item.summary.keptRatio;
     return { x, y: chart.height - 25 - ratio * (chart.height - 50) };
   };
@@ -1511,9 +1588,9 @@ function drawHistoryChart(history) {
   drawSeries("kept", "#f6c85f");
   chartContext.font = "12px sans-serif";
   chartContext.fillStyle = "#4cc9a4";
-  chartContext.fillText("有效击球", 24, 18);
+  chartContext.fillText("每分钟有效击球", 24, 18);
   chartContext.fillStyle = "#f6c85f";
-  chartContext.fillText("有效运动比例", 96, 18);
+  chartContext.fillText("有效运动比例", 132, 18);
 }
 
 function renderShotMap() {
@@ -1924,6 +2001,16 @@ function navigateEvent(direction) {
   updatePlaybackProgress();
 }
 
+function stepVideoFrame(direction) {
+  if (!state.duration) return;
+  video.pause();
+  state.reviewLoop = null;
+  const frameRate = Number(state.analysisSource?.fps) || 30;
+  video.currentTime = clamp(video.currentTime + direction / frameRate, 0, state.duration);
+  updatePlaybackProgress();
+  drawEffects();
+}
+
 function reviewNearestEvent(action) {
   const event = getActiveEvents().reduce((nearest, candidate) => {
     if (!nearest || Math.abs(candidate.timestamp - video.currentTime) < Math.abs(nearest.timestamp - video.currentTime)) {
@@ -1973,6 +2060,10 @@ function handleEditorShortcut(event) {
     reviewNearestEvent("ignore");
   } else if (event.key.toLowerCase() === "u") {
     navigateNextUnreviewed();
+  } else if (event.key === "," || event.key === "<") {
+    stepVideoFrame(-1);
+  } else if (event.key === "." || event.key === ">") {
+    stepVideoFrame(1);
   }
 }
 
@@ -2275,6 +2366,7 @@ function makeDecisionPayload() {
     sport: $("sportSelect").value,
     mode: $("modeSelect").value,
     ratio: $("ratioSelect").value,
+    creator_name: getBrandLabel(),
     events: state.events,
     segments: state.segments,
     highlights: state.highlights
@@ -2331,7 +2423,7 @@ function downloadTrainingReport() {
   </style>
 </head>
 <body>
-  <p class="muted">剪球 · 本地生成</p>
+  <p class="muted">${escapeHtml(getBrandLabel())} · 本地生成</p>
   <h1>${escapeHtml(sportProfiles[$("sportSelect").value].name)}训练报告</h1>
   <p class="muted">${escapeHtml(state.file?.name || "")} · ${new Date().toLocaleString("zh-CN")}</p>
   <div class="metrics">
@@ -2392,6 +2484,13 @@ async function importProjectFile(file) {
       !Array.isArray(payload.trajectory)
     ) {
       throw new Error("缺少事件、片段或轨迹数据");
+    }
+    if (
+      payload.events.length > 5000 ||
+      payload.segments.length > 5000 ||
+      payload.trajectory.length > 200000
+    ) {
+      throw new Error("项目数据量超过本地编辑器安全限制");
     }
     if (payload.duration && Math.abs(payload.duration - state.duration) > 2) {
       throw new Error("项目时长与当前视频不匹配");
@@ -2477,7 +2576,7 @@ async function importProjectFile(file) {
     state.analysisCapabilities = payload.capabilities || null;
     state.excludedExportKeys = new Set(
       Array.isArray(payload.excluded_export_segments)
-        ? payload.excluded_export_segments.map(String)
+        ? payload.excluded_export_segments.slice(0, 500).map(String)
         : []
     );
     state.analysisQuality = payload.analysis_quality || {
@@ -2639,7 +2738,9 @@ async function downloadCover() {
   );
   outputContext.fillStyle = "rgba(255,255,255,0.88)";
   outputContext.font = '700 24px "Microsoft YaHei", sans-serif';
-  outputContext.fillText("剪球", 1130, 64);
+  outputContext.textAlign = "right";
+  outputContext.fillText(getBrandLabel().slice(0, 18), 1210, 64);
+  outputContext.textAlign = "left";
 
   const blob = await new Promise((resolve) => output.toBlob(resolve, "image/png"));
   if (!blob) return;
@@ -2681,7 +2782,7 @@ async function downloadContactSheet() {
     outputContext.fillRect(0, 0, output.width, output.height);
     outputContext.fillStyle = "#f4f7f8";
     outputContext.font = '700 28px "Microsoft YaHei", sans-serif';
-    outputContext.fillText(`${sportProfiles[$("sportSelect").value].name}击球复盘`, margin, 38);
+    outputContext.fillText(`${getBrandLabel().slice(0, 18)} · ${sportProfiles[$("sportSelect").value].name}击球复盘`, margin, 38);
     outputContext.fillStyle = "#91a0ad";
     outputContext.font = '14px "Microsoft YaHei", sans-serif';
     outputContext.fillText(`${state.file.name} · ${events.length} 个有效候选`, margin, 62);
@@ -3291,11 +3392,13 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, reframeState, o
           outCtx.restore();
         });
 
-      outCtx.fillStyle = "rgba(0,0,0,.48)";
-      outCtx.fillRect(out.width - 236, 22, 204, 42);
-      outCtx.fillStyle = "rgba(255,255,255,.86)";
       outCtx.font = "700 24px sans-serif";
-      outCtx.fillText("剪球 AI Preview", out.width - 220, 51);
+      const brandLabel = getBrandLabel().slice(0, 18);
+      const brandWidth = Math.min(out.width - 48, Math.max(204, outCtx.measureText(brandLabel).width + 32));
+      outCtx.fillStyle = "rgba(0,0,0,.48)";
+      outCtx.fillRect(out.width - brandWidth - 32, 22, brandWidth, 42);
+      outCtx.fillStyle = "rgba(255,255,255,.86)";
+      outCtx.fillText(brandLabel, out.width - brandWidth - 16, 51);
       requestAnimationFrame(draw);
     };
     draw();
@@ -3357,6 +3460,7 @@ $("smartReframe").addEventListener("change", () => {
   state.previewReframe = { x: 0.5, y: 0.5 };
   drawEffects();
 });
+$("creatorName").addEventListener("input", updateBrandUi);
 $("reviewPlaybackRate").addEventListener("change", updatePreviewPlaybackRate);
 $("loopReview").addEventListener("change", () => {
   if (!$("loopReview").checked) state.reviewLoop = null;
@@ -3394,6 +3498,8 @@ $("highlightThreshold").addEventListener("input", () => {
 });
 $("previousEventBtn").addEventListener("click", () => navigateEvent(-1));
 $("nextEventBtn").addEventListener("click", () => navigateEvent(1));
+$("previousFrameBtn").addEventListener("click", () => stepVideoFrame(-1));
+$("nextFrameBtn").addEventListener("click", () => stepVideoFrame(1));
 $("calibrateBallBtn").addEventListener("click", startBallColorCalibration);
 $("resetBallColorBtn").addEventListener("click", resetBallColor);
 document.querySelector(".player-frame").addEventListener("click", handlePlayerFrameClick);
@@ -3401,6 +3507,7 @@ $("demoBtn").addEventListener("click", createDemoVideo);
 $("importProjectBtn").addEventListener("click", () => $("projectInput").click());
 $("projectInput").addEventListener("change", (event) => importProjectFile(event.target.files[0]));
 $("clearLocalDataBtn").addEventListener("click", clearLocalAnalysisData);
+$("retryEnvironmentBtn").addEventListener("click", () => checkLocalAnalyzerEnvironment(true));
 $("restoreBtn").addEventListener("click", () => {
   state.restored = !state.restored;
   $("restoreBtn").textContent = state.restored ? "重新删除" : "恢复全部";
@@ -3446,6 +3553,7 @@ preferenceControlIds.forEach((id) => {
 });
 
 loadEditorPreferences();
+updateBrandUi();
 renderAll();
 checkLocalAnalyzerEnvironment();
 resumeActiveAnalysis();

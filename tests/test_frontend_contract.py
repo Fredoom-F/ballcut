@@ -194,6 +194,23 @@ def run():
     assert 'id="cameraAngle"' in html
     assert "cameraAngle" in app_js
     assert "normalizedVideoPoint(event)" in app_js
+    assert 'id="retryEnvironmentBtn"' in html
+    assert "environmentReady" in app_js
+    assert "serviceVersion" in app_js
+    assert "每分钟有效击球" in app_js
+    assert "项目数据量超过本地编辑器安全限制" in app_js
+    assert 'id="creatorName"' in html
+    assert 'id="previewWatermark"' in html
+    assert "getBrandLabel" in app_js
+    assert "updateBrandUi" in app_js
+    assert 'id="previousFrameBtn"' in html
+    assert 'id="nextFrameBtn"' in html
+    assert "stepVideoFrame" in app_js
+    assert "direction / frameRate" in app_js
+    assert 'id="evidenceDistribution"' in html
+    assert "renderEvidenceDistribution" in app_js
+    assert "function median" in app_js
+    assert ".evidence-meter" in styles
     print("Frontend timeline playhead contract passed.")
 
 
