@@ -10,13 +10,20 @@ ROOT = Path(__file__).resolve().parents[1]
 def run():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     setup_script = (ROOT / "setup-jianqiu.cmd").read_text(encoding="utf-8")
+    setup_power_shell = (ROOT / "setup-jianqiu.ps1").read_text(encoding="utf-8")
     start_script = (ROOT / "start-jianqiu.cmd").read_text(encoding="utf-8")
     stop_script = (ROOT / "stop-jianqiu.cmd").read_text(encoding="utf-8")
     background_start_script = (ROOT / "start-jianqiu.ps1").read_text(encoding="utf-8")
     watchdog_script = (ROOT / "run-jianqiu-service.ps1").read_text(encoding="utf-8")
     assert "opencv-python" in requirements
     assert "numpy" in requirements
-    assert "pip install -r requirements.txt" in setup_script
+    assert "setup-jianqiu.ps1" in setup_script
+    assert "pip install -r" in setup_power_shell
+    assert "Node.js 18" in setup_power_shell
+    assert "Python 3.10" in setup_power_shell
+    assert "node --check" in setup_power_shell
+    assert "foreach ($scriptPath" in setup_power_shell
+    assert "Application script verification failed: $scriptPath" in setup_power_shell
     assert "start-jianqiu.ps1" in start_script
     assert "stop-jianqiu.ps1" in stop_script
     assert "import cv2,numpy" in background_start_script

@@ -201,6 +201,7 @@
             <div>
               <span id="fileName">等待上传视频</span>
               <strong id="durationLabel">00:00</strong>
+              <small id="videoPreflight">载入后显示素材预检</small>
             </div>
             <div class="playback-tools">
               <button id="previousEventBtn" type="button" disabled title="上一个击球">◀</button>
@@ -340,7 +341,10 @@
 
         <aside class="panel event-list">
           <div class="panel-head">
-            <h2>AI 结果</h2>
+            <div>
+              <h2>AI 结果</h2>
+              <span id="projectSaveStatus" class="project-save-status">尚未建立本地项目</span>
+            </div>
             <div class="panel-actions">
               <span id="reviewProgress" class="review-progress">复核 0 / 0</span>
               <button id="undoEditBtn" disabled title="撤销">↶</button>

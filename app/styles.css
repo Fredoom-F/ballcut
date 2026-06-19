@@ -301,6 +301,13 @@ video,
   color: var(--text);
 }
 
+.status-row small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .toggle {
   display: flex;
   grid-template-columns: none;
@@ -902,7 +909,7 @@ video,
 
 .history-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.5fr) repeat(4, minmax(70px, 1fr));
+  grid-template-columns: minmax(120px, 1.5fr) repeat(4, minmax(70px, 1fr)) auto;
   gap: 8px;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
@@ -912,6 +919,11 @@ video,
 
 .history-row span {
   color: var(--muted);
+}
+
+.history-row button {
+  min-height: 30px;
+  padding: 0 8px;
 }
 
 .panel-head {
@@ -925,6 +937,25 @@ video,
 .panel-head button {
   min-height: 34px;
   padding: 0 10px;
+}
+
+.project-save-status {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.project-save-status.saving {
+  color: var(--accent-2);
+}
+
+.project-save-status.saved {
+  color: #6dd9b5;
+}
+
+.project-save-status.error {
+  color: #ffb0b3;
 }
 
 .panel-actions {
@@ -1078,6 +1109,19 @@ video,
 
   .privacy-pill {
     white-space: normal;
+  }
+
+  .playback-tools {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .playback-tools > label:not(.toggle) {
+    flex: 1 1 120px;
+  }
+
+  .playback-tools .toggle {
+    flex: 1 1 150px;
   }
 
   .player-frame {

@@ -211,6 +211,14 @@ def run():
     assert "renderEvidenceDistribution" in app_js
     assert "function median" in app_js
     assert ".evidence-meter" in styles
+    assert 'id="projectSaveStatus"' in html
+    assert "setProjectSaveStatus" in app_js
+    assert "正在保存本机项目" in app_js
+    assert 'id="videoPreflight"' in html
+    assert "renderVideoPreflight" in app_js
+    assert "formatFileSize" in app_js
+    assert "deleteTrainingHistory" in app_js
+    assert 'aria-label="删除训练记录"' in app_js
     print("Frontend timeline playhead contract passed.")
 
 

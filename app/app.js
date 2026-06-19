@@ -101,6 +101,12 @@ function setLog(lines) {
   $("progressLog").innerHTML = lines.map((line) => `<div>${line}</div>`).join("");
 }
 
+function setProjectSaveStatus(status, message) {
+  const label = $("projectSaveStatus");
+  label.className = `project-save-status ${status || ""}`.trim();
+  label.textContent = message;
+}
+
 function saveEditorPreferences() {
   const preferences = {};
   preferenceControlIds.forEach((id) => {
@@ -203,6 +209,30 @@ function formatBytesPerSecond(bytesPerSecond) {
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
   if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
   return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "--";
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function renderVideoPreflight() {
+  if (!state.file || !state.duration || !video.videoWidth || !video.videoHeight) {
+    $("videoPreflight").textContent = "载入后显示素材预检";
+    return;
+  }
+  const preset = $("analysisPreset").value;
+  const estimated = getEstimatedAnalysisSeconds(state.duration, preset);
+  const warnings = [];
+  if (state.file.size > 900 * 1024 * 1024) warnings.push("接近 1GB 上限");
+  if (video.videoWidth >= 3840) warnings.push("4K 将自动缩小分析");
+  if (video.videoHeight > video.videoWidth) warnings.push("竖屏素材建议启用智能跟拍");
+  $("videoPreflight").textContent =
+    `${video.videoWidth}×${video.videoHeight} · ${formatFileSize(state.file.size)} · ` +
+    `${formatTime(state.duration)} · ${formatRemaining(estimated).replace("预计剩余 ", "分析约 ")}` +
+    (warnings.length ? ` · ${warnings.join(" · ")}` : " · 素材规格正常");
 }
 
 function getBenchmarkKey(preset) {
@@ -507,6 +537,22 @@ async function readTrainingHistory() {
   });
 }
 
+async function deleteTrainingHistory(key) {
+  const db = await openAnalysisDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(historyStoreName, "readwrite");
+    transaction.objectStore(historyStoreName).delete(key);
+    transaction.addEventListener("complete", () => {
+      db.close();
+      resolve();
+    });
+    transaction.addEventListener("error", () => {
+      db.close();
+      reject(transaction.error);
+    });
+  });
+}
+
 function snapshotProjectEdits() {
   return {
     events: state.events.map((event) => ({
@@ -595,9 +641,22 @@ function applyProjectEdits(edits) {
 function scheduleProjectPersist() {
   if (!state.currentCacheKey || !state.analysisQuality) return;
   clearTimeout(state.persistTimer);
+  setProjectSaveStatus("saving", "正在保存本机项目...");
   state.persistTimer = setTimeout(() => {
-    writeProjectEdits(state.currentCacheKey, snapshotProjectEdits()).catch(() => {});
-    writeTrainingHistory().then(renderTrainingHistory).catch(() => {});
+    Promise.all([
+      writeProjectEdits(state.currentCacheKey, snapshotProjectEdits()),
+      writeTrainingHistory().then(renderTrainingHistory)
+    ])
+      .then(() => {
+        setProjectSaveStatus("saved", `已保存 · ${new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        })}`);
+      })
+      .catch(() => {
+        setProjectSaveStatus("error", "本机项目保存失败");
+      });
   }, 250);
 }
 
@@ -676,6 +735,7 @@ function selectFile(file) {
   document.querySelector(".player-frame").classList.remove("calibrating");
   updateBallColorUi();
   $("trainingReport").hidden = true;
+  setProjectSaveStatus("", "等待分析后建立本地项目");
   renderAll();
   setLog(["视频已载入，等待读取时长。", "本地模式不会把文件发送到网络。"]);
 }
@@ -727,6 +787,7 @@ async function generateAnalysis() {
           `轨迹 ${state.trajectory.length} 点，疑似击球 ${state.events.length} 个。`,
           "原视频未被复制或上传；需要重新计算时关闭“复用本机分析缓存”。"
         ]);
+        setProjectSaveStatus("saved", "已恢复本机项目");
         return;
       }
     }
@@ -760,6 +821,7 @@ async function generateAnalysis() {
     await writeAnalysisCache(cacheKey, result).catch(() => {});
     await writeProjectEdits(cacheKey, snapshotProjectEdits()).catch(() => {});
     await writeTrainingHistory().catch(() => {});
+    setProjectSaveStatus("saved", "分析结果已保存到本机");
 
     const coverage = Math.round((result.quality?.coverage || 0) * 100);
     const messages = [
@@ -869,6 +931,7 @@ async function resumeActiveAnalysis() {
       `${active.fileName || "视频"} 的后台分析已经完成。`,
       "请重新选择同一视频并点击分析，系统会立即从本机缓存恢复结果。"
     ]);
+    setProjectSaveStatus("saved", "导入项目已保存到本机");
   } catch (error) {
     setLog(["后台分析任务未能恢复。", error.message]);
   } finally {
@@ -1448,14 +1511,25 @@ async function renderTrainingHistory() {
   const baseline = baselines.find((item) => item.key === state.selectedHistoryKey);
   renderTrainingComparison(buildTrainingSummary(), baseline?.summary || null);
   list.innerHTML = history.map((item) => `
-    <div class="history-row">
+    <div class="history-row" data-history-key="${escapeAttribute(item.key)}">
       <strong>${escapeAttribute(item.fileName)}</strong>
       <span>${new Date(item.updatedAt).toLocaleDateString("zh-CN")}</span>
       <span>击球 ${item.summary.activeEvents} · ${item.summary.duration ? (item.summary.activeEvents / (item.summary.duration / 60)).toFixed(1) : "0.0"}/分</span>
       <span>连续 ${item.summary.longestSequence}</span>
       <span>有效 ${Math.round(item.summary.keptRatio * 100)}%</span>
+      <button type="button" aria-label="删除训练记录">删除</button>
     </div>
   `).join("");
+  list.querySelectorAll(".history-row").forEach((row) => {
+    row.querySelector("button").addEventListener("click", async () => {
+      const key = row.dataset.historyKey;
+      if (!key) return;
+      await deleteTrainingHistory(key);
+      if (state.selectedHistoryKey === key) state.selectedHistoryKey = "";
+      renderTrainingHistory();
+      setLog(["训练历史记录已从本机删除。", "原视频、当前分析结果和其他历史记录未受影响。"]);
+    });
+  });
 }
 
 function renderTrainingComparison(current, baseline) {
@@ -3422,6 +3496,7 @@ $("dropZone").addEventListener("drop", (event) => {
 video.addEventListener("loadedmetadata", () => {
   state.duration = video.duration || 0;
   renderAll();
+  renderVideoPreflight();
   const preset = $("analysisPreset").value;
   setLog([
     "已读取视频信息。",
@@ -3430,6 +3505,7 @@ video.addEventListener("loadedmetadata", () => {
 });
 $("analysisPreset").addEventListener("change", () => {
   if (!state.duration) return;
+  renderVideoPreflight();
   const preset = $("analysisPreset").value;
   setLog([
     `已切换到${preset === "standard" ? "标准" : preset === "fast" ? "快速预筛" : "精细追踪"}。`,
