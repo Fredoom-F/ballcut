@@ -40,6 +40,7 @@ def run():
     assert "MyInvocation.MyCommand.Path" in watchdog_script
     assert "subprocess.TimeoutExpired" in test_runner
     assert "timeout=timeout" in test_runner
+    assert "test_dom_bindings.py" in test_runner
     print(f"Environment ready: OpenCV {cv2.__version__}, NumPy {numpy.__version__}")
 
 

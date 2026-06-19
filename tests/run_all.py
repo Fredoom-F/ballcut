@@ -7,6 +7,7 @@ COMMANDS = [
     ([sys.executable, "-u", str(ROOT / "tests" / "test_analyzer.py")], 120),
     ([sys.executable, "-u", str(ROOT / "tests" / "test_api.py")], 180),
     ([sys.executable, "-u", str(ROOT / "tests" / "test_frontend_contract.py")], 30),
+    ([sys.executable, "-u", str(ROOT / "tests" / "test_dom_bindings.py")], 30),
     ([sys.executable, "-u", str(ROOT / "tests" / "test_environment.py")], 30),
     (["node", str(ROOT / "tests" / "test_edit_formats.js")], 30),
     (["node", str(ROOT / "tests" / "test_highlight_selection.js")], 30),
