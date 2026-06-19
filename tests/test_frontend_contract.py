@@ -231,6 +231,10 @@ def run():
     assert 'id="downloadAnnotationsBtn"' in html
     assert "buildAnnotationPayload" in app_js
     assert "downloadAnnotations" in app_js
+    assert 'id="localServiceStatus"' in html
+    assert "setEnvironmentStatus" in app_js
+    assert "window.setInterval(() => checkLocalAnalyzerEnvironment(false), 10000)" in app_js
+    assert ".local-service-status" in styles
     assert 'state.analysisQuality ? String(activeEvents.length) : "--"' in app_js
     assert 'state.analysisQuality ? String(selectedHighlights.length) : "--"' in app_js
     print("Frontend timeline playhead contract passed.")

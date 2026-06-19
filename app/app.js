@@ -12,6 +12,7 @@ const state = {
   restored: false,
   raf: 0,
   analyzing: false,
+  environmentChecked: false,
   analysisJobId: null,
   analysisRequest: null,
   analysisPollTimer: 0,
@@ -110,6 +111,13 @@ function setProjectSaveStatus(status, message) {
   label.textContent = message;
 }
 
+function setEnvironmentStatus(status, title, detail) {
+  const panel = $("localServiceStatus");
+  panel.className = `local-service-status ${status}`;
+  panel.querySelector("strong").textContent = title;
+  panel.querySelector("span").textContent = detail;
+}
+
 function saveEditorPreferences() {
   const preferences = {};
   preferenceControlIds.forEach((id) => {
@@ -159,31 +167,62 @@ function loadEditorPreferences() {
 }
 
 async function checkLocalAnalyzerEnvironment(announce = false) {
+  const wasReady = state.environmentReady;
+  const wasChecked = state.environmentChecked;
+  setEnvironmentStatus("checking", "正在检查本地服务", "只连接 127.0.0.1，不访问外网");
   try {
     const response = await fetch("/api/system", { cache: "no-store" });
     const environment = await response.json();
     if (!response.ok || !environment.ready) {
       state.environmentReady = false;
+      state.environmentChecked = true;
+      setEnvironmentStatus(
+        "error",
+        "OpenCV 环境未就绪",
+        environment.error || "双击 setup-jianqiu.cmd 修复环境"
+      );
       $("analyzeBtn").disabled = true;
-      setLog([
-        "本地 OpenCV 环境尚未就绪。",
-        environment.error || "缺少 Python、OpenCV 或 NumPy。",
-        environment.installCommand || "python -m pip install opencv-python numpy"
-      ]);
+      if (announce || wasReady || !wasChecked) {
+        setLog([
+          "本地 OpenCV 环境尚未就绪。",
+          environment.error || "缺少 Python、OpenCV 或 NumPy。",
+          "请双击 setup-jianqiu.cmd 完成修复。"
+        ]);
+      }
       return false;
     }
     state.environmentReady = true;
+    state.environmentChecked = true;
     $("analyzeBtn").disabled = !state.file || state.analyzing;
+    setEnvironmentStatus(
+      "ready",
+      `本地服务 ${environment.serviceVersion} 正常`,
+      `Python ${environment.python} · OpenCV ${environment.opencv}`
+    );
     document.querySelector(".privacy-pill").textContent =
       `本地处理 · 服务 ${environment.serviceVersion} · Python ${environment.python} · OpenCV ${environment.opencv}`;
-    if (announce) {
-      setLog(["本地服务连接正常。", `OpenCV ${environment.opencv} 已就绪，可以继续分析。`]);
+    if (announce || (wasChecked && !wasReady)) {
+      setLog([
+        wasReady ? "本地服务连接正常。" : "本地服务已恢复连接。",
+        `OpenCV ${environment.opencv} 已就绪，可以继续分析。`
+      ]);
     }
     return true;
   } catch {
     state.environmentReady = false;
+    state.environmentChecked = true;
     $("analyzeBtn").disabled = true;
-    setLog(["无法读取本地分析环境状态，请确认剪球服务仍在运行。"]);
+    setEnvironmentStatus(
+      "error",
+      "本地服务已断开",
+      "请双击 start-jianqiu.cmd，页面会自动重新连接"
+    );
+    if (announce || wasReady || !wasChecked) {
+      setLog([
+        "无法连接本地分析服务。",
+        "请双击 start-jianqiu.cmd；后台看护启动后，本页面会自动恢复。"
+      ]);
+    }
     return false;
   }
 }
@@ -3719,4 +3758,5 @@ loadEditorPreferences();
 updateBrandUi();
 renderAll();
 checkLocalAnalyzerEnvironment();
+window.setInterval(() => checkLocalAnalyzerEnvironment(false), 10000);
 resumeActiveAnalysis();

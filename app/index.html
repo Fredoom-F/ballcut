@@ -187,6 +187,13 @@
           <button id="exportBtn" disabled>导出带水印预览</button>
           <button id="decisionBtn" disabled>下载剪辑决策</button>
           <button id="retryEnvironmentBtn" type="button">重新检查本地服务</button>
+          <div id="localServiceStatus" class="local-service-status checking" aria-live="polite">
+            <i aria-hidden="true"></i>
+            <div>
+              <strong>正在检查本地服务</strong>
+              <span>只连接 127.0.0.1，不访问外网</span>
+            </div>
+          </div>
           <button id="clearLocalDataBtn" class="danger-action" type="button">清除本机分析数据</button>
         </aside>
 
