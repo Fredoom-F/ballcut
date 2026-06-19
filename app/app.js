@@ -46,6 +46,7 @@ const $ = (id) => document.getElementById(id);
 const { buildEdl } = window.JianqiuEditFormats;
 const { mergeSegments, selectByDuration } = window.JianqiuHighlightSelection;
 const { buildExportReadiness } = window.JianqiuExportReadiness;
+const { buildCandidateReviewMetrics } = window.JianqiuReviewMetrics;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -1177,6 +1178,7 @@ function buildTrainingSummary() {
     event.reviewStatus === "confirmed" || event.reviewStatus === "ignored" || event.source === "manual"
   ).length;
   const reviewRate = state.events.length ? reviewed / state.events.length : 0;
+  const candidateReview = buildCandidateReviewMetrics(state.events);
   const keptRatio = state.duration ? (state.duration - getRemovedDuration()) / state.duration : 0;
   const coverage = state.analysisQuality?.coverage || 0;
   const averageConfidence = events.length
@@ -1201,6 +1203,7 @@ function buildTrainingSummary() {
     fastestSpeed,
     keptRatio,
     reviewRate,
+    candidateReview,
     trustScore,
     trustLabel,
     trajectoryCoverage: coverage,
@@ -1255,6 +1258,12 @@ function renderTrainingReport() {
     ["最长连续", `${summary.longestSequence} 次`],
     ["最快画面球速", summary.fastestSpeed ? `${Math.round(summary.fastestSpeed)} px/s` : "--"],
     ["识别可信度", summary.trustLabel],
+    [
+      "候选命中率",
+      summary.candidateReview.precision == null
+        ? "--"
+        : `${Math.round(summary.candidateReview.precision * 100)}%`
+    ],
     ["机位稳定", `${Math.round(summary.cameraStability * 100)}%`]
   ];
   $("trainingReportMetrics").innerHTML = values
@@ -1354,6 +1363,14 @@ function buildDataInsights(summary) {
   }
   if (summary.reviewRate < 1) {
     insights.push(["可信度", `仍有 ${Math.max(0, state.events.length - Math.round(summary.reviewRate * state.events.length))} 个候选未复核，数据提示会随确认或忽略实时变化。`]);
+  }
+  if (summary.candidateReview.reviewed >= 3) {
+    insights.push([
+      "候选命中率",
+      summary.candidateReview.precision >= 0.75
+        ? `已复核 ${summary.candidateReview.reviewed} 个模型候选，确认命中率 ${Math.round(summary.candidateReview.precision * 100)}%，当前参数误报较少。`
+        : `已复核 ${summary.candidateReview.reviewed} 个模型候选，确认命中率 ${Math.round(summary.candidateReview.precision * 100)}%，建议改用保守灵敏度或校准球颜色。`
+    ]);
   }
   const classified = Object.entries(summary.shotTypes)
     .filter(([type]) => type !== "unclassified")
@@ -1561,6 +1578,7 @@ async function renderTrainingHistory() {
       <span>击球 ${item.summary.activeEvents} · ${item.summary.duration ? (item.summary.activeEvents / (item.summary.duration / 60)).toFixed(1) : "0.0"}/分</span>
       <span>连续 ${item.summary.longestSequence}</span>
       <span>有效 ${Math.round(item.summary.keptRatio * 100)}%</span>
+      <span>命中 ${item.summary.candidateReview?.precision == null ? "--" : `${Math.round(item.summary.candidateReview.precision * 100)}%`}</span>
       <button type="button" aria-label="删除训练记录">删除</button>
     </div>
   `).join("");
@@ -2549,6 +2567,7 @@ function downloadTrainingReport() {
     <div class="metric"><span>有效运动</span><strong>${Math.round(summary.keptRatio * 100)}%</strong></div>
     <div class="metric"><span>有效击球</span><strong>${summary.activeEvents}</strong></div>
     <div class="metric"><span>识别可信度</span><strong>${summary.trustLabel}</strong></div>
+    <div class="metric"><span>候选命中率</span><strong>${summary.candidateReview.precision == null ? "--" : `${Math.round(summary.candidateReview.precision * 100)}%`}</strong></div>
     <div class="metric"><span>平均间隔</span><strong>${summary.averageInterval == null ? "--" : `${summary.averageInterval.toFixed(1)} 秒`}</strong></div>
     <div class="metric"><span>最长连续</span><strong>${summary.longestSequence} 次</strong></div>
     <div class="metric"><span>轨迹覆盖</span><strong>${Math.round(summary.trajectoryCoverage * 100)}%</strong></div>
