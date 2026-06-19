@@ -47,6 +47,7 @@ const { buildEdl } = window.JianqiuEditFormats;
 const { mergeSegments, selectByDuration } = window.JianqiuHighlightSelection;
 const { buildExportReadiness } = window.JianqiuExportReadiness;
 const { buildCandidateReviewMetrics } = window.JianqiuReviewMetrics;
+const { buildAnnotationPayload } = window.JianqiuAnnotationExport;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -3070,6 +3071,28 @@ function downloadTrainingCsv() {
   );
 }
 
+function downloadAnnotations() {
+  if (!state.analysisQuality || !state.file) return;
+  const payload = buildAnnotationPayload({
+    fileName: state.file.name,
+    fileSize: state.file.size,
+    duration: state.duration,
+    sport: $("sportSelect").value,
+    cameraAngle: $("cameraAngle").value,
+    events: state.events
+  });
+  downloadText(
+    `jianqiu-annotations-${Date.now()}.json`,
+    JSON.stringify(payload, null, 2),
+    "application/json;charset=utf-8"
+  );
+  const review = buildCandidateReviewMetrics(state.events);
+  setLog([
+    "标注数据已下载。",
+    `包含 ${payload.annotations.length} 条事件：确认 ${review.confirmed}、误报 ${review.ignored}、待复核 ${review.remaining}；不包含原视频。`
+  ]);
+}
+
 function downloadEditDecisionList() {
   if (!state.file || !state.duration) return;
   const segments = getExportSegments();
@@ -3663,6 +3686,7 @@ $("downloadCoverBtn").addEventListener("click", downloadCover);
 $("downloadContactSheetBtn").addEventListener("click", downloadContactSheet);
 $("copyCaptionBtn").addEventListener("click", copySocialCaption);
 $("downloadCsvBtn").addEventListener("click", downloadTrainingCsv);
+$("downloadAnnotationsBtn").addEventListener("click", downloadAnnotations);
 $("downloadEdlBtn").addEventListener("click", downloadEditDecisionList);
 $("shotMap").addEventListener("click", locateShotMapEvent);
 $("historyBaselineSelect").addEventListener("change", (event) => {

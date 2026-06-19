@@ -222,11 +222,15 @@ def run():
     assert 'id="exportReadinessSummary"' in html
     assert "./export-readiness.js" in html
     assert "./review-metrics.js" in html
+    assert "./annotation-export.js" in html
     assert "buildExportReadiness" in app_js
     assert "renderExportReadiness" in app_js
     assert "#exportReadinessList" in styles
     assert "buildCandidateReviewMetrics" in app_js
     assert "候选命中率" in app_js
+    assert 'id="downloadAnnotationsBtn"' in html
+    assert "buildAnnotationPayload" in app_js
+    assert "downloadAnnotations" in app_js
     assert 'state.analysisQuality ? String(activeEvents.length) : "--"' in app_js
     assert 'state.analysisQuality ? String(selectedHighlights.length) : "--"' in app_js
     print("Frontend timeline playhead contract passed.")
