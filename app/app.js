@@ -26,7 +26,8 @@ const state = {
   latestAnalysisStats: null,
   exporting: false,
   selectedHistoryKey: "",
-  previewReframe: { x: 0.5, y: 0.5 }
+  previewReframe: { x: 0.5, y: 0.5 },
+  reviewLoop: null
 };
 
 const sportProfiles = {
@@ -49,6 +50,26 @@ const analysisStoreName = "results";
 const projectStoreName = "projects";
 const historyStoreName = "history";
 const activeJobStorageKey = "jianqiu-active-analysis";
+const preferenceStorageKey = "jianqiu-editor-preferences-v1";
+const preferenceControlIds = [
+  "sportSelect",
+  "modeSelect",
+  "highlightDuration",
+  "ratioSelect",
+  "smartReframe",
+  "effectStyle",
+  "showTrajectory",
+  "showImpact",
+  "cutStrength",
+  "highlightThreshold",
+  "hitSensitivity",
+  "analysisPreset",
+  "reuseCache",
+  "keepAudio",
+  "autoSlowMotion",
+  "smartSkip",
+  "reviewPlaybackRate"
+];
 
 function formatTime(seconds) {
   const safe = Math.max(0, Number(seconds) || 0);
@@ -63,6 +84,54 @@ function clamp(value, min, max) {
 
 function setLog(lines) {
   $("progressLog").innerHTML = lines.map((line) => `<div>${line}</div>`).join("");
+}
+
+function saveEditorPreferences() {
+  const preferences = {};
+  preferenceControlIds.forEach((id) => {
+    const control = $(id);
+    if (!control) return;
+    preferences[id] = control.type === "checkbox" ? control.checked : control.value;
+  });
+  try {
+    localStorage.setItem(preferenceStorageKey, JSON.stringify(preferences));
+  } catch {
+    // The editor remains usable when browser storage is disabled.
+  }
+}
+
+function loadEditorPreferences() {
+  try {
+    const preferences = JSON.parse(localStorage.getItem(preferenceStorageKey) || "{}");
+    preferenceControlIds.forEach((id) => {
+      const control = $(id);
+      const value = preferences[id];
+      if (!control || value == null) return;
+      if (control.type === "checkbox") {
+        control.checked = Boolean(value);
+        return;
+      }
+      if (control instanceof HTMLSelectElement) {
+        const allowed = [...control.options].some((option) => option.value === String(value));
+        if (allowed) control.value = String(value);
+        return;
+      }
+      const minimum = Number(control.min);
+      const maximum = Number(control.max);
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        control.value = String(clamp(
+          numeric,
+          Number.isFinite(minimum) ? minimum : numeric,
+          Number.isFinite(maximum) ? maximum : numeric
+        ));
+      }
+    });
+  } catch {
+    localStorage.removeItem(preferenceStorageKey);
+  }
+  $("highlightThresholdValue").textContent = `${$("highlightThreshold").value} 分`;
+  $("highlightDuration").disabled = $("modeSelect").value !== "highlights";
 }
 
 async function checkLocalAnalyzerEnvironment() {
@@ -545,6 +614,7 @@ function selectFile(file) {
   $("finishCutBtn").disabled = true;
   state.pendingCutStart = null;
   state.positionEventId = null;
+  state.reviewLoop = null;
   $("previousEventBtn").disabled = true;
   $("nextEventBtn").disabled = true;
   $("calibrateBallBtn").disabled = false;
@@ -841,6 +911,62 @@ function getKeptSegments() {
 
 function getActiveEvents() {
   return state.events.filter((event) => event.reviewStatus !== "ignored");
+}
+
+function getReviewStats() {
+  const reviewed = state.events.filter((event) =>
+    event.reviewStatus === "confirmed" ||
+    event.reviewStatus === "ignored" ||
+    event.source === "manual"
+  ).length;
+  return {
+    reviewed,
+    total: state.events.length,
+    remaining: Math.max(0, state.events.length - reviewed)
+  };
+}
+
+function getUnreviewedEvents() {
+  return state.events
+    .filter((event) => event.reviewStatus === "unreviewed" && event.source !== "manual")
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function navigateNextUnreviewed() {
+  const candidates = getUnreviewedEvents();
+  if (!candidates.length) {
+    setLog(["候选击球已全部复核。", "可以继续检查精彩集锦、训练报告或导出 EDL。"]);
+    return;
+  }
+  const next = candidates.find((event) => event.timestamp > video.currentTime + 0.15) || candidates[0];
+  setReviewLoop(next);
+  video.currentTime = next.timestamp;
+  video.pause();
+  updatePlaybackProgress();
+  setLog([
+    `待确认候选 ${formatTime(next.timestamp)}。`,
+    formatEvidence(next.evidence)
+  ]);
+}
+
+function confirmCurrentAndContinue() {
+  const candidates = getUnreviewedEvents();
+  if (!candidates.length) {
+    navigateNextUnreviewed();
+    return;
+  }
+  const nearest = candidates.reduce((best, event) => {
+    const distance = Math.abs(event.timestamp - video.currentTime);
+    return !best || distance < best.distance ? { event, distance } : best;
+  }, null);
+  const target = nearest?.distance <= 2 ? nearest.event : candidates[0];
+  target.reviewStatus = "confirmed";
+  rebuildHighlights();
+  pushEditHistory();
+  scheduleProjectPersist();
+  renderAll();
+  video.currentTime = target.timestamp + 0.2;
+  navigateNextUnreviewed();
 }
 
 function getHighlightThreshold() {
@@ -1353,6 +1479,10 @@ function renderTimeline() {
 function renderEvents() {
   const list = $("eventList");
   list.innerHTML = "";
+  const review = getReviewStats();
+  $("reviewProgress").textContent = `复核 ${review.reviewed} / ${review.total}`;
+  $("nextUnreviewedBtn").disabled = review.remaining === 0;
+  $("confirmNextBtn").disabled = review.remaining === 0;
   if (!state.events.length) {
     list.innerHTML = '<div class="event-card"><span>暂无识别结果。</span></div>';
     renderCuts();
@@ -1422,6 +1552,7 @@ function renderEvents() {
       const action = clickEvent.target.dataset.action;
       if (!action) return;
       if (action === "locate") {
+        setReviewLoop(event);
         video.currentTime = event.timestamp;
         video.play();
         return;
@@ -1614,6 +1745,7 @@ function navigateEvent(direction) {
   const target = direction > 0
     ? events.find((event) => event.timestamp > current + 0.08) || events[0]
     : events.slice().reverse().find((event) => event.timestamp < current - 0.08) || events[events.length - 1];
+  setReviewLoop(target);
   video.currentTime = target.timestamp;
   updatePlaybackProgress();
 }
@@ -1665,6 +1797,8 @@ function handleEditorShortcut(event) {
     reviewNearestEvent("confirm");
   } else if (event.key.toLowerCase() === "i") {
     reviewNearestEvent("ignore");
+  } else if (event.key.toLowerCase() === "u") {
+    navigateNextUnreviewed();
   }
 }
 
@@ -1887,16 +2021,34 @@ function skipRemovedSegments() {
 }
 
 function updatePreviewPlaybackRate() {
-  if (!$("autoSlowMotion").checked || !state.highlights.length) {
-    if (video.playbackRate !== 1) video.playbackRate = 1;
-    return;
-  }
+  const baseRate = Number($("reviewPlaybackRate").value) || 1;
   const nearImpact = getActiveEvents().some((event) =>
     Math.abs(event.timestamp - video.currentTime) <= 0.5 &&
     state.highlights.some((highlight) => highlight.eventId === event.id)
   );
-  const targetRate = nearImpact ? 0.5 : 1;
+  const targetRate = $("autoSlowMotion").checked && nearImpact
+    ? Math.min(baseRate, 0.5)
+    : baseRate;
   if (video.playbackRate !== targetRate) video.playbackRate = targetRate;
+}
+
+function setReviewLoop(event) {
+  if (!event) {
+    state.reviewLoop = null;
+    return;
+  }
+  state.reviewLoop = {
+    eventId: event.id,
+    start: clamp(event.timestamp - 1.2, 0, state.duration),
+    end: clamp(event.timestamp + 1.5, 0, state.duration)
+  };
+}
+
+function updateReviewLoop() {
+  if (!$("loopReview").checked || !state.reviewLoop || video.paused) return;
+  if (video.currentTime >= state.reviewLoop.end || video.currentTime < state.reviewLoop.start - 0.1) {
+    video.currentTime = state.reviewLoop.start;
+  }
 }
 
 function updatePlaybackProgress() {
@@ -2134,6 +2286,26 @@ async function waitForSeek(targetVideo, time) {
   });
 }
 
+function waitForLoadedMetadata(targetVideo) {
+  if (targetVideo.readyState >= 1) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      targetVideo.removeEventListener("loadedmetadata", loaded);
+      targetVideo.removeEventListener("error", failed);
+    };
+    const loaded = () => {
+      cleanup();
+      resolve();
+    };
+    const failed = () => {
+      cleanup();
+      reject(new Error("无法读取视频关键帧"));
+    };
+    targetVideo.addEventListener("loadedmetadata", loaded);
+    targetVideo.addEventListener("error", failed);
+  });
+}
+
 function getBestHighlight() {
   return state.highlights.slice().sort((a, b) => b.score - a.score)[0] || null;
 }
@@ -2142,6 +2314,7 @@ function locateBestHighlight() {
   const highlight = getBestHighlight();
   if (!highlight) return;
   const event = state.events.find((candidate) => candidate.id === highlight.eventId);
+  if (event) setReviewLoop(event);
   video.currentTime = event?.timestamp ?? highlight.start;
   updatePlaybackProgress();
   video.play();
@@ -2217,6 +2390,118 @@ async function downloadCover() {
   link.click();
   URL.revokeObjectURL(url);
   setLog(["封面已生成。", `使用 ${formatTime(targetTime)} 的最高分精彩画面，本地导出为 1280×720 PNG。`]);
+}
+
+async function downloadContactSheet() {
+  const events = getActiveEvents().slice().sort((a, b) => a.timestamp - b.timestamp).slice(0, 12);
+  if (!state.file || !events.length) {
+    setLog(["没有可生成拼图的有效击球。", "请先完成分析并确认需要保留的候选。"]);
+    return;
+  }
+  const button = $("downloadContactSheetBtn");
+  button.disabled = true;
+  const reviewVideo = document.createElement("video");
+  reviewVideo.src = state.url;
+  reviewVideo.muted = true;
+  reviewVideo.preload = "auto";
+  try {
+    await waitForLoadedMetadata(reviewVideo);
+    const columns = 3;
+    const tileWidth = 392;
+    const tileHeight = 248;
+    const gap = 16;
+    const margin = 24;
+    const headerHeight = 72;
+    const rows = Math.ceil(events.length / columns);
+    const output = document.createElement("canvas");
+    output.width = margin * 2 + columns * tileWidth + (columns - 1) * gap;
+    output.height = headerHeight + margin + rows * tileHeight + (rows - 1) * gap + margin;
+    const outputContext = output.getContext("2d");
+    outputContext.fillStyle = "#0d1115";
+    outputContext.fillRect(0, 0, output.width, output.height);
+    outputContext.fillStyle = "#f4f7f8";
+    outputContext.font = '700 28px "Microsoft YaHei", sans-serif';
+    outputContext.fillText(`${sportProfiles[$("sportSelect").value].name}击球复盘`, margin, 38);
+    outputContext.fillStyle = "#91a0ad";
+    outputContext.font = '14px "Microsoft YaHei", sans-serif';
+    outputContext.fillText(`${state.file.name} · ${events.length} 个有效候选`, margin, 62);
+
+    for (let index = 0; index < events.length; index += 1) {
+      const event = events[index];
+      await waitForSeek(reviewVideo, clamp(event.timestamp, 0, state.duration));
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const x = margin + column * (tileWidth + gap);
+      const y = headerHeight + row * (tileHeight + gap);
+      const imageHeight = 190;
+      outputContext.fillStyle = "#050607";
+      outputContext.fillRect(x, y, tileWidth, tileHeight);
+      const render = getContainedRect(
+        tileWidth,
+        imageHeight,
+        reviewVideo.videoWidth,
+        reviewVideo.videoHeight
+      );
+      outputContext.drawImage(
+        reviewVideo,
+        x + render.x,
+        y + render.y,
+        render.width,
+        render.height
+      );
+      if (event.position) {
+        const markerX = x + render.x + render.width * event.position.x;
+        const markerY = y + render.y + render.height * event.position.y;
+        outputContext.strokeStyle = "#f6c85f";
+        outputContext.lineWidth = 4;
+        outputContext.beginPath();
+        outputContext.arc(markerX, markerY, 13, 0, Math.PI * 2);
+        outputContext.stroke();
+      }
+      outputContext.fillStyle = "#f4f7f8";
+      outputContext.font = '700 15px "Microsoft YaHei", sans-serif';
+      outputContext.fillText(
+        `${String(index + 1).padStart(2, "0")}  ${formatTime(event.timestamp)}  ${getShotTypeLabel(event.shotType)}`,
+        x + 12,
+        y + 216
+      );
+      outputContext.fillStyle = "#91a0ad";
+      outputContext.font = '12px "Microsoft YaHei", sans-serif';
+      const status = event.reviewStatus === "confirmed"
+        ? "已确认"
+        : event.source === "manual"
+          ? "手动添加"
+          : "待确认";
+      outputContext.fillText(
+        `置信度 ${Math.round(event.confidence * 100)}% · ${status}`,
+        x + 12,
+        y + 238
+      );
+      showAnalysisProgress({
+        phase: `正在提取击球关键帧 ${index + 1} / ${events.length}`,
+        percent: (index + 1) / events.length,
+        eta: formatRemaining(Math.max(0, events.length - index - 1) * 0.25),
+        speed: `${Math.round(((index + 1) / events.length) * 100)}%`
+      });
+    }
+
+    const blob = await new Promise((resolve) => output.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("浏览器无法生成 PNG");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `jianqiu-contact-sheet-${Date.now()}.png`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setLog(["击球复盘拼图已生成。", `按时间顺序汇总 ${events.length} 个关键帧，图片只在本机生成。`]);
+  } catch (error) {
+    setLog(["击球复盘拼图生成失败。", error.message || "无法读取视频关键帧。"]);
+  } finally {
+    hideAnalysisProgress();
+    reviewVideo.removeAttribute("src");
+    reviewVideo.load();
+    button.disabled = false;
+  }
 }
 
 function buildSocialCaption() {
@@ -2752,8 +3037,13 @@ $("smartReframe").addEventListener("change", () => {
   state.previewReframe = { x: 0.5, y: 0.5 };
   drawEffects();
 });
+$("reviewPlaybackRate").addEventListener("change", updatePreviewPlaybackRate);
+$("loopReview").addEventListener("change", () => {
+  if (!$("loopReview").checked) state.reviewLoop = null;
+});
 video.addEventListener("timeupdate", () => {
   skipRemovedSegments();
+  updateReviewLoop();
   updatePreviewPlaybackRate();
   updatePlaybackProgress();
 });
@@ -2771,6 +3061,8 @@ $("analyzeBtn").addEventListener("click", generateAnalysis);
 $("cancelAnalyzeBtn").addEventListener("click", cancelAnalysis);
 $("addHitBtn").addEventListener("click", addHitAtCurrentTime);
 $("confirmHighBtn").addEventListener("click", confirmHighConfidenceEvents);
+$("nextUnreviewedBtn").addEventListener("click", navigateNextUnreviewed);
+$("confirmNextBtn").addEventListener("click", confirmCurrentAndContinue);
 $("undoEditBtn").addEventListener("click", undoEdit);
 $("redoEditBtn").addEventListener("click", redoEdit);
 $("markCutStartBtn").addEventListener("click", markCutStart);
@@ -2802,6 +3094,7 @@ $("decisionBtn").addEventListener("click", () => {
 $("downloadReportBtn").addEventListener("click", downloadTrainingReport);
 $("bestHighlightBtn").addEventListener("click", locateBestHighlight);
 $("downloadCoverBtn").addEventListener("click", downloadCover);
+$("downloadContactSheetBtn").addEventListener("click", downloadContactSheet);
 $("copyCaptionBtn").addEventListener("click", copySocialCaption);
 $("downloadCsvBtn").addEventListener("click", downloadTrainingCsv);
 $("downloadEdlBtn").addEventListener("click", downloadEditDecisionList);
@@ -2813,6 +3106,7 @@ $("historyBaselineSelect").addEventListener("change", (event) => {
 $("exportBtn").addEventListener("click", exportPreview);
 $("timeline").addEventListener("click", (event) => {
   if (!state.duration) return;
+  state.reviewLoop = null;
   const rect = $("timeline").getBoundingClientRect();
   const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
   video.currentTime = ratio * state.duration;
@@ -2820,7 +3114,11 @@ $("timeline").addEventListener("click", (event) => {
 });
 window.addEventListener("resize", sizeCanvasToVideo);
 window.addEventListener("keydown", handleEditorShortcut);
+preferenceControlIds.forEach((id) => {
+  $(id)?.addEventListener("change", saveEditorPreferences);
+});
 
+loadEditorPreferences();
 renderAll();
 checkLocalAnalyzerEnvironment();
 resumeActiveAnalysis();

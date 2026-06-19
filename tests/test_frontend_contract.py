@@ -149,6 +149,23 @@ def run():
     assert "renderCapabilityDisclosure" in app_js
     assert "analysisCapabilities" in app_js
     assert ".capability-disclosure" in styles
+    assert 'id="reviewProgress"' in html
+    assert 'id="nextUnreviewedBtn"' in html
+    assert 'id="confirmNextBtn"' in html
+    assert "getReviewStats" in app_js
+    assert "navigateNextUnreviewed" in app_js
+    assert "confirmCurrentAndContinue" in app_js
+    assert 'id="downloadContactSheetBtn"' in html
+    assert "downloadContactSheet" in app_js
+    assert "waitForLoadedMetadata" in app_js
+    assert "正在提取击球关键帧" in app_js
+    assert 'id="reviewPlaybackRate"' in html
+    assert 'id="loopReview"' in html
+    assert "setReviewLoop" in app_js
+    assert "updateReviewLoop" in app_js
+    assert "preferenceStorageKey" in app_js
+    assert "saveEditorPreferences" in app_js
+    assert "loadEditorPreferences" in app_js
     print("Frontend timeline playhead contract passed.")
 
 

@@ -184,6 +184,18 @@
             <div class="playback-tools">
               <button id="previousEventBtn" type="button" disabled title="上一个击球">◀</button>
               <button id="nextEventBtn" type="button" disabled title="下一个击球">▶</button>
+              <label>
+                复核速度
+                <select id="reviewPlaybackRate" aria-label="复核播放速度">
+                  <option value="1">1×</option>
+                  <option value="0.5">0.5×</option>
+                  <option value="0.25">0.25×</option>
+                </select>
+              </label>
+              <label class="toggle">
+                <input id="loopReview" type="checkbox" />
+                <span>循环当前击球</span>
+              </label>
               <label class="toggle">
                 <input id="smartSkip" type="checkbox" checked />
                 <span>播放时跳过冗余片段</span>
@@ -230,6 +242,7 @@
               <div class="report-actions">
                 <button id="bestHighlightBtn" type="button">定位最佳</button>
                 <button id="downloadCoverBtn" type="button">下载封面</button>
+                <button id="downloadContactSheetBtn" type="button">下载击球拼图</button>
                 <button id="copyCaptionBtn" type="button">复制文案</button>
                 <button id="downloadCsvBtn" type="button">下载 CSV</button>
                 <button id="downloadEdlBtn" type="button">下载 EDL</button>
@@ -280,6 +293,7 @@
           <div class="panel-head">
             <h2>AI 结果</h2>
             <div class="panel-actions">
+              <span id="reviewProgress" class="review-progress">复核 0 / 0</span>
               <button id="undoEditBtn" disabled title="撤销">↶</button>
               <button id="redoEditBtn" disabled title="重做">↷</button>
               <button id="markCutStartBtn" disabled>标记删除起点</button>
@@ -292,6 +306,8 @@
                 <option value="ignored">已忽略</option>
               </select>
               <button id="confirmHighBtn" disabled>确认高分</button>
+              <button id="nextUnreviewedBtn" disabled>下一待确认</button>
+              <button id="confirmNextBtn" disabled>确认并继续</button>
               <button id="addHitBtn" disabled>在此添加击球</button>
               <button id="restoreBtn" disabled>恢复全部</button>
             </div>

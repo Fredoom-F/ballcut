@@ -314,6 +314,19 @@ video,
   gap: 7px;
 }
 
+.playback-tools > label:not(.toggle) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.playback-tools select {
+  min-height: 34px;
+  width: auto;
+}
+
 .playback-tools button {
   width: 38px;
   min-height: 36px;
@@ -779,6 +792,13 @@ video,
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.review-progress {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .panel-actions select {
