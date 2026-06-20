@@ -17,6 +17,7 @@ COMMANDS = [
     (["node", str(ROOT / "tests" / "test_cut_review.js")], 30),
     (["node", str(ROOT / "tests" / "test_file_fingerprint.js")], 30),
     (["node", str(ROOT / "tests" / "test_local_backup.js")], 30),
+    (["node", str(ROOT / "tests" / "test_impact_trail.js")], 30),
     (["node", "--check", str(ROOT / "app" / "app.js")], 30),
     (["node", "--check", str(ROOT / "app" / "edit-formats.js")], 30),
     (["node", "--check", str(ROOT / "app" / "highlight-selection.js")], 30),
@@ -26,6 +27,7 @@ COMMANDS = [
     (["node", "--check", str(ROOT / "app" / "cut-review.js")], 30),
     (["node", "--check", str(ROOT / "app" / "file-fingerprint.js")], 30),
     (["node", "--check", str(ROOT / "app" / "local-backup.js")], 30),
+    (["node", "--check", str(ROOT / "app" / "impact-trail.js")], 30),
     (["node", "--check", str(ROOT / "app" / "server.js")], 30),
 ]
 

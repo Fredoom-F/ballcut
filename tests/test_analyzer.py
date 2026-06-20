@@ -45,6 +45,18 @@ def run():
     assert matched >= 4, "hit recall is below delivery threshold"
     assert idle_overlap >= 2.5, "idle segment was not identified"
     assert len(actual) <= 10, "too many false hit candidates"
+    from analyzer.analyze_video import filter_moving_track
+
+    stationary_light = [
+        {"time": index * 0.1, "x": 100 + (index % 2) * 0.1, "y": 20, "interpolated": False}
+        for index in range(8)
+    ]
+    moving_ball = [
+        {"time": index * 0.1, "x": 100 + index * 4, "y": 20 + index * 2, "interpolated": False}
+        for index in range(8)
+    ]
+    assert not filter_moving_track(stationary_light, 550), "stationary light leaked into trajectory"
+    assert len(filter_moving_track(moving_ball, 550)) == len(moving_ball)
     assert 0 <= result["quality"]["cameraStability"] <= 1
     assert result["quality"]["medianSharpness"] > 0
     assert result["quality"]["medianBrightness"] > 0

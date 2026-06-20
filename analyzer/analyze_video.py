@@ -232,6 +232,32 @@ def choose_candidate(candidates, last_point, predicted_point, frame_diagonal):
     return max(plausible, key=lambda item: item["score"])
 
 
+def filter_moving_track(track, frame_diagonal, maximum_gap=0.45):
+    if len(track) < 2:
+        return []
+    minimum_speed = frame_diagonal * 0.025
+    moving = []
+    for index, point in enumerate(track):
+        local_speeds = []
+        if index > 0:
+            previous = track[index - 1]
+            dt = point["time"] - previous["time"]
+            if 0 < dt <= maximum_gap:
+                local_speeds.append(
+                    math.dist((point["x"], point["y"]), (previous["x"], previous["y"])) / dt
+                )
+        if index + 1 < len(track):
+            following = track[index + 1]
+            dt = following["time"] - point["time"]
+            if 0 < dt <= maximum_gap:
+                local_speeds.append(
+                    math.dist((following["x"], following["y"]), (point["x"], point["y"])) / dt
+                )
+        if local_speeds and max(local_speeds) >= minimum_speed:
+            moving.append(point)
+    return moving
+
+
 def point_near_activity(point, regions, profile):
     padding_x = profile["paddingX"]
     padding_up = profile["paddingUp"]
@@ -697,9 +723,10 @@ def analyze_video(
     segments = build_segments(
         duration, track, events, motion_samples, strength, frame_diagonal, camera_angle
     )
+    moving_track = filter_moving_track(track, frame_diagonal)
     stable_track = [
         point
-        for point in track
+        for point in moving_track
         if rolling_camera_stable(motion_samples, point["time"], camera_profile)
         and 0.02 <= point["xNorm"] <= 0.98
         and 0.04 <= point["yNorm"] <= 0.96
@@ -765,7 +792,7 @@ def analyze_video(
         "capabilities": {
             "ballTracking": {
                 "enabled": True,
-                "method": "OpenCV 颜色、运动与轨迹连续性",
+                "method": "OpenCV 颜色、运动、实际位移与轨迹连续性",
             },
             "cameraMotion": {
                 "enabled": True,
@@ -793,7 +820,7 @@ def analyze_video(
         "segments": segments,
         "highlights": highlights,
         "criteria": {
-            "ballCandidate": "运动区域与该运动球色范围的交集，并按面积、圆度和轨迹连续性评分",
+            "ballCandidate": "运动区域与该运动球色范围的交集，按面积、圆度和连续性评分，并过滤原地闪烁亮点",
             "hit": "球轨迹连续、镜头稳定、候选靠近人体尺度运动区域，且方向变化或速度变化超过阈值",
             "idle": "持续低运动量且没有可靠移动球轨迹；全局镜头大幅移动也不计为有效运动",
             "highlight": "置信度不低于 0.58 的疑似击球事件前后片段",

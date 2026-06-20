@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appRoot = Join-Path $projectRoot "app"
 $healthUrl = "http://127.0.0.1:4173/health"
-$expectedVersion = "0.4.3"
+$expectedVersion = "0.4.4"
 
 function Invoke-CheckedCommand([string]$filePath, [string[]]$arguments, [string]$workingDirectory) {
     $process = Start-Process `

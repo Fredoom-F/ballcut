@@ -33,7 +33,7 @@ def run():
     assert "Start-Process" in background_start_script
     assert "-WindowStyle Hidden" in background_start_script
     assert "expectedVersion" in background_start_script
-    assert '$expectedVersion = "0.4.3"' in background_start_script
+    assert '$expectedVersion = "0.4.4"' in background_start_script
     assert "LOCALAPPDATA" in background_start_script
     assert "run-jianqiu-service.ps1" in background_start_script
     assert "run-jianqiu-service\\.ps1" in background_start_script
@@ -43,7 +43,7 @@ def run():
     assert "run_all.py" in release_check
     assert "test_real_progress.py" in release_check
     assert "test_real_video.py" in release_check
-    assert '$expectedVersion = "0.4.3"' in release_check
+    assert '$expectedVersion = "0.4.4"' in release_check
     assert "release-check.ps1" in release_check_cmd
     assert "subprocess.TimeoutExpired" in test_runner
     assert "timeout=timeout" in test_runner

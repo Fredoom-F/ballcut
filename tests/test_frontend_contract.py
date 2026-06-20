@@ -226,6 +226,7 @@ def run():
     assert "./cut-review.js" in html
     assert "./file-fingerprint.js" in html
     assert "./local-backup.js" in html
+    assert "./impact-trail.js" in html
     assert "buildExportReadiness" in app_js
     assert "renderExportReadiness" in app_js
     assert "getCutReviewStats" in app_js
@@ -240,6 +241,7 @@ def run():
     assert 'id="importLocalBackupBtn"' in html
     assert "validateLocalBackup" in app_js
     assert "replaceTrainingHistory" in app_js
+    assert "getPostImpactTrail" in app_js
     assert 'aria-label="选择本地视频"' in html
     assert 'role="slider"' in html
     assert 'tabindex="0"' in html

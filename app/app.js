@@ -54,6 +54,7 @@ const { buildAnnotationPayload } = window.JianqiuAnnotationExport;
 const { updateCutReview, cutReviewLabel } = window.JianqiuCutReview;
 const { quickFileFingerprint } = window.JianqiuFileFingerprint;
 const { createLocalBackup, validateLocalBackup } = window.JianqiuLocalBackup;
+const { getPostImpactTrail } = window.JianqiuImpactTrail;
 const video = $("sourceVideo");
 const canvas = $("effectCanvas");
 const ctx = canvas.getContext("2d");
@@ -340,7 +341,7 @@ function openAnalysisDb() {
 
 function getAnalysisCacheKey(file, sport, strength, sensitivity, preset, cameraAngle) {
   return [
-    "v5",
+    "v6",
     file.name,
     file.size,
     file.lastModified,
@@ -2485,9 +2486,10 @@ function drawEffects() {
     ctx.restore();
   });
 
-  const trail = state.trajectory
-    .filter((point) => point.time <= now && now - point.time < 1.2)
-    .slice(-settings.trailPoints);
+  const trail = getPostImpactTrail(state.trajectory, getActiveEvents(), now, {
+    trailSeconds: 1.2,
+    maxPoints: settings.trailPoints
+  });
   if ($("showTrajectory").checked && trail.length > 1) {
     ctx.save();
     ctx.strokeStyle = settings.color;
@@ -3660,9 +3662,15 @@ function drawExportSegment(exportVideo, outCtx, out, start, end, reframeState, o
         render.dh
       );
 
-      const exportTrail = state.trajectory
-        .filter((point) => point.time <= exportVideo.currentTime && exportVideo.currentTime - point.time < 1.2)
-        .slice(-settings.trailPoints);
+      const exportTrail = getPostImpactTrail(
+        state.trajectory,
+        getActiveEvents(),
+        exportVideo.currentTime,
+        {
+          trailSeconds: 1.2,
+          maxPoints: settings.trailPoints
+        }
+      );
       if ($("showTrajectory").checked && exportTrail.length > 1) {
         outCtx.save();
         outCtx.strokeStyle = settings.color;

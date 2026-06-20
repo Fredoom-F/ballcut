@@ -48,7 +48,7 @@ def run():
         health_response = health_connection.getresponse()
         health = json.loads(health_response.read().decode("utf-8"))
         assert health_response.status == 200
-        assert health["version"] == "0.4.3"
+        assert health["version"] == "0.4.4"
         assert health["analyzerReady"] is True
         assert health_response.getheader("X-Content-Type-Options") == "nosniff"
         assert health_response.getheader("Cross-Origin-Resource-Policy") == "same-origin"
@@ -123,7 +123,7 @@ def run():
         assert system_response.status == 200
         assert system_state["ready"] is True
         assert system_state["opencv"]
-        assert system_state["serviceVersion"] == "0.4.3"
+        assert system_state["serviceVersion"] == "0.4.4"
 
         cross_origin_connection = http.client.HTTPConnection("127.0.0.1", 4183, timeout=10)
         cross_origin_connection.request(
